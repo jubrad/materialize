@@ -18,7 +18,9 @@ use anyhow::{anyhow, Context};
 use itertools::Itertools;
 use mz_ccsr::tls::{Certificate, Identity};
 use mz_cloud_resources::{AwsExternalIdPrefix, CloudResourceReader};
-use mz_kafka_util::client::{BrokerRewrite, MzClientContext, MzKafkaError, TunnelingClientContext};
+use mz_kafka_util::client::{
+    BrokerRewrite, MzClientContext, MzKafkaError, TunnelConfig, TunnelingClientContext,
+};
 use mz_ore::error::ErrorExt;
 use mz_proto::tokio_postgres::any_ssl_mode;
 use mz_proto::{IntoRustIfSome, ProtoType, RustType, TryFromProtoError};
@@ -472,10 +474,14 @@ impl KafkaConnection {
         // partitions.
         options.insert("allow.auto.create.topics".into(), "false".into());
 
-        options.insert(
-            "bootstrap.servers".into(),
-            self.brokers.iter().map(|b| &b.address).join(",").into(),
-        );
+        let brokers = match &self.default_tunnel {
+            Tunnel::AwsPrivatelink(t) => {
+                assert!(&self.brokers.is_empty());
+                format!("connection-{}:{}", t.connection_id, t.port.unwrap_or(9092))
+            }
+            _ => self.brokers.iter().map(|b| &b.address).join(","),
+        };
+        options.insert("bootstrap.servers".into(), brokers.into());
         let security_protocol = match (self.tls.is_some(), self.sasl.is_some()) {
             (false, false) => "PLAINTEXT",
             (true, false) => "SSL",
@@ -533,8 +539,11 @@ impl KafkaConnection {
             Tunnel::Direct => {
                 // By default, don't offer a default override for broker address lookup.
             }
-            Tunnel::AwsPrivatelink(_) => {
-                unreachable!("top-level AwsPrivatelink tunnels are not supported yet")
+            Tunnel::AwsPrivatelink(pl) => {
+                context.set_default_tunnel(TunnelConfig::StaticHost(format!(
+                    "connection-{}",
+                    &pl.connection_id.to_string()
+                )));
             }
             Tunnel::Ssh(ssh_tunnel) => {
                 let secret = storage_configuration
@@ -544,12 +553,12 @@ impl KafkaConnection {
                     .await?;
                 let key_pair = SshKeyPair::from_bytes(&secret)?;
 
-                context.set_default_ssh_tunnel(SshTunnelConfig {
+                context.set_default_tunnel(TunnelConfig::Ssh(SshTunnelConfig {
                     host: ssh_tunnel.connection.host.clone(),
                     port: ssh_tunnel.connection.port,
                     user: ssh_tunnel.connection.user.clone(),
                     key_pair,
-                });
+                }));
             }
         }
 
