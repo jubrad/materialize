@@ -6725,6 +6725,18 @@ pub const MZ_INTROSPECTION_CLUSTER_REPLICA: BuiltinClusterReplica = BuiltinClust
     cluster_name: MZ_INTROSPECTION_CLUSTER.name,
 };
 
+pub const MZ_SUPPORT_CLUSTER: BuiltinCluster = BuiltinCluster {
+    name: "mz_support",
+    privileges: &[
+        MzAclItem {
+            grantee: MZ_SUPPORT_ROLE_ID,
+            grantor: MZ_SYSTEM_ROLE_ID,
+            acl_mode: AclMode::USAGE.union(AclMode::CREATE),
+        },
+        rbac::owner_privilege(ObjectType::Cluster, MZ_SYSTEM_ROLE_ID),
+    ],
+};
+
 /// List of all builtin objects sorted topologically by dependency.
 pub static BUILTINS_STATIC: Lazy<Vec<Builtin<NameReference>>> = Lazy::new(|| {
     let mut builtins = vec![
@@ -7127,7 +7139,11 @@ pub const BUILTIN_ROLES: &[&BuiltinRole] = &[
 ];
 pub const GRANTABLE_BUILTIN_ROLE_IDS: &[RoleId] =
     &[MZ_MONITOR_ROLE_ID, MZ_MONITOR_REDACTED_ROLE_ID];
-pub const BUILTIN_CLUSTERS: &[&BuiltinCluster] = &[&MZ_SYSTEM_CLUSTER, &MZ_INTROSPECTION_CLUSTER];
+pub const BUILTIN_CLUSTERS: &[&BuiltinCluster] = &[
+    &MZ_SYSTEM_CLUSTER,
+    &MZ_INTROSPECTION_CLUSTER,
+    &MZ_SUPPORT_CLUSTER,
+];
 pub const BUILTIN_CLUSTER_REPLICAS: &[&BuiltinClusterReplica] = &[
     &MZ_SYSTEM_CLUSTER_REPLICA,
     &MZ_INTROSPECTION_CLUSTER_REPLICA,

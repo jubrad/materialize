@@ -55,14 +55,16 @@ SELECT id, name, managed, replication_factor, size FROM mz_clusters
 ----
 s1  mz_system  true  1  2
 s2  mz_introspection  true  1  2
+s3  mz_support  true  1  2
 u1  quickstart  true  1  2
 
 
 query T rowsort
 SELECT name FROM (SHOW CLUSTERS)
 ----
-mz_system
 mz_introspection
+mz_support
+mz_system
 quickstart
 
 # Test invalid option combinations.

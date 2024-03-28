@@ -1815,6 +1815,10 @@ impl BuiltinBootstrapClusterSizes {
             Ok(self.system_cluster.clone())
         } else if cluster_name == mz_catalog::builtin::MZ_INTROSPECTION_CLUSTER.name {
             Ok(self.introspection_cluster.clone())
+        } else if cluster_name == mz_catalog::builtin::MZ_SUPPORT_CLUSTER.name {
+            // for now mz_support will have the same size as the introspection cluster
+            // however, this is intended to be created with zero replicas
+            Ok(self.introspection_cluster.clone())
         } else {
             Err(mz_catalog::durable::CatalogError::Catalog(
                 SqlCatalogError::UnexpectedBuiltinCluster(cluster_name.to_owned()),

@@ -15,16 +15,19 @@ $ skip-if
 SELECT ${arg.replicas} > 1;
 
 $ postgres-connect name=mz_system url=postgres://mz_system:materialize@${testdrive.materialize-internal-sql-addr}
+$ postgres-connect name=mz_support url=postgres://mz_support:materialize@${testdrive.materialize-internal-sql-addr}
 
 > SELECT name FROM (SHOW CLUSTERS)
 mz_system
+mz_support
 mz_introspection
 quickstart
 
 $ postgres-connect name=mz_system url=postgres://mz_system:materialize@${testdrive.materialize-internal-sql-addr}
-> select managed from mz_catalog.mz_clusters where id like 's%';
-true
-true
+> select name, managed from mz_catalog.mz_clusters where id like 's%';
+mz_system true
+mz_support true
+mz_introspection true
 
 $ postgres-execute connection=postgres://mz_system@${testdrive.materialize-internal-sql-addr}/materialize
 ALTER SYSTEM SET enable_rbac_checks TO false
@@ -99,3 +102,15 @@ $ set-regex match=true|false replacement=<TRUE_OR_FALSE>
 
 > SHOW CLUSTER REPLICAS WHERE cluster = 'mz_system'
 mz_system r1 1 <TRUE_OR_FALSE>
+
+> SET CLUSTER TO mz_support
+
+> SHOW CLUSTER REPLICAS WHERE cluster = 'mz_support'
+
+$ postgres-execute connection=mz_support
+> ALTER CLUSTER mz_support SET (replication factor 1);
+
+> SHOW CLUSTER REPLICAS WHERE cluster = 'mz_support'
+mz_support r1 1 <TRUE_OR_FALSE>
+
+
