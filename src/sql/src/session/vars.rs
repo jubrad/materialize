@@ -1192,6 +1192,7 @@ impl SystemVars {
             &cluster_scheduling::CLUSTER_SOFTEN_REPLICATION_ANTI_AFFINITY,
             &cluster_scheduling::CLUSTER_SOFTEN_REPLICATION_ANTI_AFFINITY_WEIGHT,
             &cluster_scheduling::CLUSTER_ENABLE_TOPOLOGY_SPREAD,
+            &cluster_scheduling::CLUSTER_ENABLE_GRACEFUL_RECNOFIGURATION,
             &cluster_scheduling::CLUSTER_TOPOLOGY_SPREAD_IGNORE_NON_SINGULAR_SCALE,
             &cluster_scheduling::CLUSTER_TOPOLOGY_SPREAD_MAX_SKEW,
             &cluster_scheduling::CLUSTER_TOPOLOGY_SPREAD_SOFT,

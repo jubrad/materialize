@@ -539,6 +539,7 @@ impl Coordinator {
             id: cluster_id,
             name: _,
             options,
+            ..
         }: AlterClusterPlan,
     ) -> Result<ExecuteResponse, AdapterError> {
         use mz_catalog::memory::objects::ClusterVariant::*;

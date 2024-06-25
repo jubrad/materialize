@@ -47,24 +47,25 @@ use mz_sql_parser::ast::{
     AlterSinkStatement, AlterSourceAction, AlterSourceAddSubsourceOption,
     AlterSourceAddSubsourceOptionName, AlterSourceStatement, AlterSystemResetAllStatement,
     AlterSystemResetStatement, AlterSystemSetStatement, AvroSchema, AvroSchemaOption,
-    AvroSchemaOptionName, ClusterFeature, ClusterFeatureName, ClusterOption, ClusterOptionName,
-    ClusterScheduleOptionValue, ColumnOption, CommentObjectType, CommentStatement,
-    CreateClusterReplicaStatement, CreateClusterStatement, CreateConnectionOption,
-    CreateConnectionOptionName, CreateConnectionStatement, CreateConnectionType,
-    CreateDatabaseStatement, CreateIndexStatement, CreateMaterializedViewStatement,
-    CreateRoleStatement, CreateSchemaStatement, CreateSecretStatement, CreateSinkConnection,
-    CreateSinkOption, CreateSinkOptionName, CreateSinkStatement, CreateSourceConnection,
-    CreateSourceFormat, CreateSourceOption, CreateSourceOptionName, CreateSourceStatement,
-    CreateSubsourceOption, CreateSubsourceOptionName, CreateSubsourceStatement,
-    CreateTableStatement, CreateTypeAs, CreateTypeListOption, CreateTypeListOptionName,
-    CreateTypeMapOption, CreateTypeMapOptionName, CreateTypeStatement, CreateViewStatement,
-    CreateWebhookSourceStatement, CsrConfigOption, CsrConfigOptionName, CsrConnection,
-    CsrConnectionAvro, CsrConnectionProtobuf, CsrSeedProtobuf, CsvColumns, DeferredItemName,
-    DocOnIdentifier, DocOnSchema, DropObjectsStatement, DropOwnedStatement, Expr, Format, Ident,
-    IfExistsBehavior, IndexOption, IndexOptionName, KafkaSinkConfigOption, KeyConstraint,
-    LoadGeneratorOption, LoadGeneratorOptionName, MaterializedViewOption,
-    MaterializedViewOptionName, MySqlConfigOption, MySqlConfigOptionName, PgConfigOption,
-    PgConfigOptionName, ProtobufSchema, QualifiedReplica, RefreshAtOptionValue,
+    AvroSchemaOptionName, ClusterAlterStrategyOption, ClusterAlterStrategyOptionName,
+    ClusterAlterStrategyOptionValue, ClusterFeature, ClusterFeatureName, ClusterOption,
+    ClusterOptionName, ClusterScheduleOptionValue, ColumnOption, CommentObjectType,
+    CommentStatement, CreateClusterReplicaStatement, CreateClusterStatement,
+    CreateConnectionOption, CreateConnectionOptionName, CreateConnectionStatement,
+    CreateConnectionType, CreateDatabaseStatement, CreateIndexStatement,
+    CreateMaterializedViewStatement, CreateRoleStatement, CreateSchemaStatement,
+    CreateSecretStatement, CreateSinkConnection, CreateSinkOption, CreateSinkOptionName,
+    CreateSinkStatement, CreateSourceConnection, CreateSourceFormat, CreateSourceOption,
+    CreateSourceOptionName, CreateSourceStatement, CreateSubsourceOption,
+    CreateSubsourceOptionName, CreateSubsourceStatement, CreateTableStatement, CreateTypeAs,
+    CreateTypeListOption, CreateTypeListOptionName, CreateTypeMapOption, CreateTypeMapOptionName,
+    CreateTypeStatement, CreateViewStatement, CreateWebhookSourceStatement, CsrConfigOption,
+    CsrConfigOptionName, CsrConnection, CsrConnectionAvro, CsrConnectionProtobuf, CsrSeedProtobuf,
+    CsvColumns, DeferredItemName, DocOnIdentifier, DocOnSchema, DropObjectsStatement,
+    DropOwnedStatement, Expr, Format, Ident, IfExistsBehavior, IndexOption, IndexOptionName,
+    KafkaSinkConfigOption, KeyConstraint, LoadGeneratorOption, LoadGeneratorOptionName,
+    MaterializedViewOption, MaterializedViewOptionName, MySqlConfigOption, MySqlConfigOptionName,
+    PgConfigOption, PgConfigOptionName, ProtobufSchema, QualifiedReplica, RefreshAtOptionValue,
     RefreshEveryOptionValue, RefreshOptionValue, ReplicaDefinition, ReplicaOption,
     ReplicaOptionName, RoleAttribute, SetRoleVar, SourceIncludeMetadata, Statement,
     TableConstraint, TableOption, TableOptionName, UnresolvedDatabaseName, UnresolvedItemName,
@@ -97,6 +98,7 @@ use mz_storage_types::sources::postgres::{
 };
 use mz_storage_types::sources::{GenericSourceConnection, SourceConnection, SourceDesc, Timeline};
 use prost::Message;
+use tracing::info;
 
 use crate::ast::display::AstDisplay;
 use crate::catalog::{
@@ -118,7 +120,6 @@ use crate::plan::statement::ddl::connection::{INALTERABLE_OPTIONS, MUTUALLY_EXCL
 use crate::plan::statement::{scl, StatementContext, StatementDesc};
 use crate::plan::typeconv::{plan_cast, CastContext};
 use crate::plan::with_options::{OptionalDuration, TryFromValue};
-use crate::plan::WebhookValidation;
 use crate::plan::{
     plan_utils, query, transform_ast, AlterClusterPlan, AlterClusterRenamePlan,
     AlterClusterReplicaRenamePlan, AlterClusterSwapPlan, AlterConnectionPlan, AlterItemRenamePlan,
@@ -134,6 +135,7 @@ use crate::plan::{
     PlanClusterOption, PlanNotice, QueryContext, ReplicaConfig, Secret, Sink, Source, Table, Type,
     VariableValue, View, WebhookBodyFormat, WebhookHeaderFilters, WebhookHeaders,
 };
+use crate::plan::{AlterClusterPlanStrategy, WebhookValidation};
 use crate::session::vars;
 use crate::session::vars::{
     ENABLE_CLUSTER_SCHEDULE_REFRESH, ENABLE_KAFKA_SINK_HEADERS, ENABLE_REFRESH_EVERY_MVS,
@@ -3449,6 +3451,11 @@ generate_extracted_config!(
 );
 
 generate_extracted_config!(
+    ClusterAlterStrategyOption,
+    (Wait, ClusterAlterStrategyOptionValue)
+);
+
+generate_extracted_config!(
     ClusterFeature,
     (ReoptimizeImportedViews, Option<bool>, Default(None)),
     (EnableEagerDeltaJoins, Option<bool>, Default(None)),
@@ -4637,9 +4644,13 @@ pub fn plan_alter_cluster(
     };
 
     let mut options: PlanClusterOption = Default::default();
+    let mut mechanism: AlterClusterPlanStrategy = Default::default();
 
     match action {
-        AlterClusterAction::SetOptions(set_options) => {
+        AlterClusterAction::SetOptions {
+            options: set_options,
+            mechanism: alter_mechanism,
+        } => {
             let ClusterOptionExtracted {
                 availability_zones,
                 introspection_debugging,
@@ -4655,6 +4666,15 @@ pub fn plan_alter_cluster(
 
             match managed.unwrap_or_else(|| cluster.is_managed()) {
                 true => {
+                    if let Some(alter_strategy) = alter_mechanism {
+                        info!("GRACEFUL ALTER CLUSTER WITH {:?}", alter_strategy);
+                        let alter_strategy_extracted =
+                            ClusterAlterStrategyOptionExtracted::try_from(alter_strategy)?;
+                        mechanism = AlterClusterPlanStrategy::try_from(alter_strategy_extracted)?;
+                        scx.require_feature_flag(
+                            &crate::session::vars::ENABLE_GRACEFUL_CLUSTER_RECONFIGURATION,
+                        )?;
+                    }
                     if replica_defs.is_some() {
                         sql_bail!("REPLICAS not supported for managed clusters");
                     }
@@ -4694,6 +4714,9 @@ pub fn plan_alter_cluster(
                     }
                 }
                 false => {
+                    if alter_mechanism.is_some() {
+                        sql_bail!("ALTER... WITH not supported for unmanaged clusters");
+                    }
                     if availability_zones.is_some() {
                         sql_bail!("AVAILABILITY ZONES not supported for unmanaged clusters");
                     }
@@ -4820,6 +4843,7 @@ pub fn plan_alter_cluster(
         id: cluster.id(),
         name: cluster.name().to_string(),
         options,
+        mechanism,
     }))
 }
 

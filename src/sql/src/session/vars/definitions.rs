@@ -1502,6 +1502,14 @@ pub mod cluster_scheduling {
         true,
     );
 
+    pub static CLUSTER_ENABLE_GRACEFUL_RECNOFIGURATION: VarDefinition = VarDefinition::new(
+        "cluster_enable_graceful_reconfiguration",
+        value!(bool; false),
+        "Enable ddl to specify graceful reconfiguration settings for alter cluster",
+        true,
+    )
+    .with_feature_flag(&ENABLE_GRACEFUL_CLUSTER_RECONFIGURATION);
+
     pub static CLUSTER_TOPOLOGY_SPREAD_IGNORE_NON_SINGULAR_SCALE: VarDefinition = VarDefinition::new(
         "cluster_topology_spread_ignore_non_singular_scale",
         value!(bool; DEFAULT_TOPOLOGY_SPREAD_IGNORE_NON_SINGULAR_SCALE),
@@ -2075,6 +2083,13 @@ feature_flags!(
         default: false,
         internal: true,
         enable_for_item_parsing: true,
+    },
+    {
+        name: enable_graceful_cluster_reconfiguration,
+        desc: "Enable graceful reconfiguration for alter cluster",
+        default: false,
+        internal: false,
+        enable_for_item_parsing: false,
     },
 );
 

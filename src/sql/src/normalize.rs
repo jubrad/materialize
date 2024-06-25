@@ -545,7 +545,9 @@ macro_rules! generate_extracted_config {
                                     if !$allow_multiple && !extracted.seen.insert(option.name.clone()) {
                                         sql_bail!("{} specified more than once", option.name.to_ast_string());
                                     }
-                                    let val = <$t>::try_from_value(option.value)
+                                    // TODO @jubrad figure out why ClusterOption works with option,
+                                    // but ClusterAlterMechanismOption does not
+                                    let val = <$t>::try_from_value(option.value.expect("THIS IS UNEXPECTED"))
                                         .map_err(|e| sql_err!("invalid {}: {}", option.name.to_ast_string(), e))?;
                                     generate_extracted_config!(
                                         @ifexpr $allow_multiple,

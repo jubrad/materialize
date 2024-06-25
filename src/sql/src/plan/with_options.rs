@@ -15,8 +15,8 @@ use mz_repr::adt::interval::Interval;
 use mz_repr::bytes::ByteSize;
 use mz_repr::{strconv, GlobalId};
 use mz_sql_parser::ast::{
-    ClusterScheduleOptionValue, ConnectionDefaultAwsPrivatelink, Ident, KafkaBroker,
-    RefreshOptionValue, ReplicaDefinition,
+    ClusterAlterStrategyOptionValue, ClusterScheduleOptionValue, ConnectionDefaultAwsPrivatelink,
+    Ident, KafkaBroker, RefreshOptionValue, ReplicaDefinition,
 };
 use mz_storage_types::connections::StringOrSecret;
 use serde::{Deserialize, Serialize};
@@ -476,6 +476,7 @@ impl<V: TryFromValue<Value>, T: AstInfo + std::fmt::Debug> TryFromValue<WithOpti
             | WithOptionValue::ClusterReplicas(_)
             | WithOptionValue::ConnectionKafkaBroker(_)
             | WithOptionValue::ConnectionAwsPrivatelink(_)
+            | WithOptionValue::ClusterAlterStrategy(_)
             | WithOptionValue::Refresh(_)
             | WithOptionValue::ClusterScheduleOptionValue(_) => sql_bail!(
                 "incompatible value types: cannot convert {} to {}",
@@ -483,6 +484,7 @@ impl<V: TryFromValue<Value>, T: AstInfo + std::fmt::Debug> TryFromValue<WithOpti
                     // The first few are unreachable because they are handled at the top of the outer match.
                     WithOptionValue::Value(_) => unreachable!(),
                     WithOptionValue::RetainHistoryFor(_) => unreachable!(),
+                    WithOptionValue::ClusterAlterStrategy(_) => "cluster alter strategy",
                     WithOptionValue::Sequence(_) => "sequences",
                     WithOptionValue::Item(_) => "object references",
                     WithOptionValue::UnresolvedItemName(_) => "object names",
@@ -617,5 +619,19 @@ impl TryFromValue<WithOptionValue<Aug>> for ClusterScheduleOptionValue {
 
     fn name() -> String {
         "cluster schedule option value".to_string()
+    }
+}
+
+impl TryFromValue<WithOptionValue<Aug>> for ClusterAlterStrategyOptionValue {
+    fn try_from_value(v: WithOptionValue<Aug>) -> Result<Self, PlanError> {
+        if let WithOptionValue::ClusterAlterStrategy(r) = v {
+            Ok(r)
+        } else {
+            sql_bail!("cannot use value `{}` for a cluster alter mechanism", v)
+        }
+    }
+
+    fn name() -> String {
+        "cluster alter mechanism option value".to_string()
     }
 }
