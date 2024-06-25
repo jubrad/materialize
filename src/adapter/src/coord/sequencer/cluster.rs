@@ -23,13 +23,14 @@ use mz_ore::cast::CastFrom;
 use mz_repr::role_id::RoleId;
 use mz_sql::catalog::{CatalogCluster, ObjectType};
 use mz_sql::plan::{
-    AlterClusterRenamePlan, AlterClusterReplicaRenamePlan, AlterClusterSwapPlan,
-    AlterOptionParameter, ComputeReplicaIntrospectionConfig, CreateClusterManagedPlan,
-    CreateClusterPlan, CreateClusterReplicaPlan, CreateClusterUnmanagedPlan, CreateClusterVariant,
-    PlanClusterOption,
+    AlterClusterPlanStrategy, AlterClusterRenamePlan, AlterClusterReplicaRenamePlan,
+    AlterClusterStrategyCondition, AlterClusterSwapPlan, AlterOptionParameter,
+    ComputeReplicaIntrospectionConfig, CreateClusterManagedPlan, CreateClusterPlan,
+    CreateClusterReplicaPlan, CreateClusterUnmanagedPlan, CreateClusterVariant, PlanClusterOption,
 };
 use mz_sql::session::metadata::SessionMetadata;
 use mz_sql::session::vars::{SystemVars, Var, MAX_REPLICAS_PER_CLUSTER};
+use timely::Container;
 
 use crate::catalog::{Op, ReplicaCreateDropReason};
 use crate::coord::Coordinator;
@@ -151,6 +152,7 @@ impl Coordinator {
                     Some(availability_zones.as_ref())
                 },
                 disk,
+                false,
                 *session.current_role_id(),
                 ReplicaCreateDropReason::Manual,
             )?;
@@ -173,6 +175,7 @@ impl Coordinator {
         ops: &mut Vec<Op>,
         azs: Option<&[String]>,
         disk: bool,
+        pending: bool,
         owner_id: RoleId,
         reason: ReplicaCreateDropReason,
     ) -> Result<(), AdapterError> {
@@ -182,7 +185,7 @@ impl Coordinator {
             disk,
             internal: false,
             size: size.clone(),
-            pending: false,
+            pending,
         };
 
         let logging = if let Some(config) = compute.introspection {
@@ -544,9 +547,6 @@ impl Coordinator {
         }
     }
 
-    /// When this is called by the automated cluster scheduling, `scheduling_decision_reason` should
-    /// contain information on why is a cluster being turned On/Off. It will be forwarded to the
-    /// `details` field of the audit log event that records creating or dropping replicas.
     pub async fn sequence_alter_cluster_managed_to_managed(
         &mut self,
         session: Option<&Session>,
@@ -554,11 +554,14 @@ impl Coordinator {
         config: &ClusterVariantManaged,
         new_config: ClusterVariantManaged,
         reason: ReplicaCreateDropReason,
-    ) -> Result<(), AdapterError> {
+        strategy: AlterClusterPlanStrategy,
+    ) -> Result<bool, AdapterError> {
         let cluster = self.catalog.get_cluster(cluster_id);
         let name = cluster.name().to_string();
         let owner_id = cluster.owner_id();
-        let mut ops = vec![];
+        let mut drop_ops = vec![];
+        let mut create_ops = vec![];
+        let mut create_cluster_replicas = vec![];
 
         let (
             ClusterVariantManaged {
@@ -581,13 +584,16 @@ impl Coordinator {
             },
         ) = (&config, &new_config);
 
+        let (name_suffix, mut new_replica_start_pending) = match strategy.condition {
+            AlterClusterStrategyCondition::None => ("", false),
+            _ => ("-pending", true),
+        };
+
         let role_id = session.map(|s| s.role_metadata().current_role);
         self.catalog.ensure_valid_replica_size(
             &self.catalog().get_role_allowed_cluster_sizes(&role_id),
             new_size,
         )?;
-
-        let mut create_cluster_replicas = vec![];
 
         let compute = mz_sql::plan::ComputeReplicaConfig {
             introspection: new_logging
@@ -618,7 +624,6 @@ impl Coordinator {
             || new_disk != disk
         {
             self.ensure_valid_azs(new_availability_zones.iter())?;
-
             // tear down all replicas, create new ones
             let replica_ids_and_reasons = (0..*replication_factor)
                 .map(managed_cluster_replica_name)
@@ -631,19 +636,20 @@ impl Coordinator {
                     ))
                 })
                 .collect();
-            ops.push(catalog::Op::DropObjects(replica_ids_and_reasons));
+            drop_ops.push(catalog::Op::DropObjects(replica_ids_and_reasons));
 
             for name in (0..*new_replication_factor).map(managed_cluster_replica_name) {
                 let id = self.catalog_mut().allocate_replica_id(&cluster_id).await?;
                 self.create_managed_cluster_replica_op(
                     cluster_id,
                     id,
-                    name,
+                    format!("{name}{name_suffix}"),
                     &compute,
                     new_size,
-                    &mut ops,
+                    &mut create_ops,
                     Some(new_availability_zones.as_ref()),
                     *new_disk,
+                    new_replica_start_pending,
                     owner_id,
                     reason.clone(),
                 )?;
@@ -662,9 +668,9 @@ impl Coordinator {
                     ))
                 })
                 .collect();
-            ops.push(catalog::Op::DropObjects(replica_ids));
+            drop_ops.push(catalog::Op::DropObjects(replica_ids));
         } else if new_replication_factor > replication_factor {
-            // Adjust size up
+            new_replica_start_pending = false;
             for name in
                 (*replication_factor..*new_replication_factor).map(managed_cluster_replica_name)
             {
@@ -675,11 +681,12 @@ impl Coordinator {
                     name,
                     &compute,
                     new_size,
-                    &mut ops,
+                    &mut create_ops,
                     // AVAILABILITY ZONES hasn't changed, so existing replicas don't need to be
                     // rescheduled.
                     Some(new_availability_zones.as_ref()),
                     *new_disk,
+                    new_replica_start_pending,
                     owner_id,
                     reason.clone(),
                 )?;
@@ -687,16 +694,22 @@ impl Coordinator {
             }
         }
 
-        let variant = ClusterVariant::Managed(new_config);
-        ops.push(catalog::Op::UpdateClusterConfig {
-            id: cluster_id,
-            name,
-            config: ClusterConfig { variant },
-        });
-
-        self.catalog_transact(session, ops).await?;
+        // we only finalize if we created something and the thing we created
+        // started as pending
+        let mut needs_finalization = true;
+        if create_cluster_replicas.is_empty() || !new_replica_start_pending {
+            let variant = ClusterVariant::Managed(new_config);
+            drop_ops.push(catalog::Op::UpdateClusterConfig {
+                id: cluster_id,
+                name,
+                config: ClusterConfig { variant },
+            });
+            self.catalog_transact(session, drop_ops).await?;
+            needs_finalization = false;
+        }
+        self.catalog_transact(session, create_ops.clone()).await?;
         self.create_cluster_replicas(&create_cluster_replicas).await;
-        Ok(())
+        Ok(needs_finalization)
     }
 
     pub(crate) async fn sequence_alter_cluster_unmanaged_to_managed(

@@ -91,7 +91,8 @@ use mz_adapter_types::connection::ConnectionId;
 use mz_build_info::BuildInfo;
 use mz_catalog::config::{AwsPrincipalContext, ClusterReplicaSizeMap};
 use mz_catalog::memory::objects::{
-    CatalogEntry, CatalogItem, ClusterReplicaProcessStatus, Connection, DataSourceDesc, Source,
+    CatalogEntry, CatalogItem, ClusterReplicaProcessStatus, ClusterVariantManaged, Connection,
+    DataSourceDesc, Source,
 };
 use mz_cloud_resources::{CloudResourceController, VpcEndpointConfig, VpcEndpointEvent};
 use mz_compute_client::controller::error::InstanceMissing;
@@ -149,7 +150,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use crate::active_compute_sink::ActiveComputeSink;
-use crate::catalog::{BuiltinTableUpdate, Catalog};
+use crate::catalog::{BuiltinTableUpdate, Catalog, DropObjectInfo, Op, ReplicaCreateDropReason};
 use crate::client::{Client, Handle};
 use crate::command::{Command, ExecuteResponse};
 use crate::config::{SynchronizedParameters, SystemParameterFrontend, SystemParameterSyncConfig};
@@ -639,12 +640,20 @@ pub struct ExplainTimestampFinish {
 #[derive(Debug)]
 pub enum ClusterStage {
     Alter(AlterCluster),
+    Finalize(FinalizeAlterCluster),
 }
 
 #[derive(Debug)]
 pub struct AlterCluster {
     validity: PlanValidity,
     plan: plan::AlterClusterPlan,
+}
+
+#[derive(Debug)]
+pub struct FinalizeAlterCluster {
+    validity: PlanValidity,
+    plan: plan::AlterClusterPlan,
+    new_config: ClusterVariantManaged,
 }
 
 #[derive(Debug)]
@@ -1820,6 +1829,7 @@ impl Coordinator {
 
         debug!("coordinator init: creating compute replicas");
         let mut replicas_to_start = vec![];
+        let mut replicas_to_drop = vec![];
         for instance in self.catalog.clusters() {
             self.controller.create_cluster(
                 instance.id,
@@ -1829,12 +1839,25 @@ impl Coordinator {
             )?;
             for replica in instance.replicas() {
                 let role = instance.role();
-                replicas_to_start.push(CreateReplicaConfig {
-                    cluster_id: instance.id,
-                    replica_id: replica.replica_id,
-                    role,
-                    config: replica.config.clone(),
-                });
+                match &replica.config.location {
+                    mz_controller::clusters::ReplicaLocation::Managed(ref l) if l.pending => {
+                        replicas_to_drop.push(Op::DropObjects(vec![
+                            DropObjectInfo::ClusterReplica((
+                                instance.id,
+                                replica.replica_id,
+                                ReplicaCreateDropReason::Manual,
+                            )),
+                        ]));
+                    }
+                    _ => {
+                        replicas_to_start.push(CreateReplicaConfig {
+                            cluster_id: instance.id,
+                            replica_id: replica.replica_id,
+                            role,
+                            config: replica.config.clone(),
+                        });
+                    }
+                }
             }
         }
         let enable_worker_core_affinity =
@@ -1842,6 +1865,9 @@ impl Coordinator {
         self.controller
             .create_replicas(replicas_to_start, enable_worker_core_affinity)
             .await?;
+
+        debug!("coordinator init: dropping pending compute replicas");
+        self.catalog_transact(None, replicas_to_drop).await?;
 
         debug!("coordinator init: initializing storage collections");
         self.bootstrap_storage_collections().await;
