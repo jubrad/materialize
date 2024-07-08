@@ -691,6 +691,7 @@ impl Coordinator {
                     }
                     finalization_needed = FinalizationNeeded::In(duration);
                 }
+                AlterClusterPlanStrategy::UntilCaughtUp { .. } => coord_bail!("Unimplemented"),
             }
         } else if new_replication_factor < replication_factor {
             // Adjust replica count down

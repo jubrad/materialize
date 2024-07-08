@@ -50,7 +50,8 @@ use mz_sql_parser::ast::{
     AlterSourceAddSubsourceOptionName, AlterSourceStatement, AlterSystemResetAllStatement,
     AlterSystemResetStatement, AlterSystemSetStatement, AlterTableAddColumnStatement, AvroSchema,
     AvroSchemaOption, AvroSchemaOptionName, ClusterAlterOption, ClusterAlterOptionName,
-    ClusterAlterOptionValue, ClusterFeature, ClusterFeatureName, ClusterOption, ClusterOptionName,
+    ClusterAlterOptionValue, ClusterAlterUntilCaughtUpOption, ClusterAlterUntilCaughtUpOptionName,
+    ClusterFeature, ClusterFeatureName, ClusterOption, ClusterOptionName,
     ClusterScheduleOptionValue, ColumnOption, CommentObjectType, CommentStatement,
     CreateClusterReplicaStatement, CreateClusterStatement, CreateConnectionOption,
     CreateConnectionOptionName, CreateConnectionStatement, CreateConnectionType,
@@ -3636,7 +3637,13 @@ generate_extracted_config!(
     (WorkloadClass, OptionalString)
 );
 
-generate_extracted_config!(ClusterAlterOption, (Wait, ClusterAlterOptionValue));
+generate_extracted_config!(ClusterAlterOption, (Wait, ClusterAlterOptionValue<Aug>));
+
+generate_extracted_config!(
+    ClusterAlterUntilCaughtUpOption,
+    (Timeout, Duration),
+    (OnTimeout, String)
+);
 
 generate_extracted_config!(
     ClusterFeature,
@@ -5069,6 +5076,9 @@ pub fn plan_alter_cluster(
                             scx.require_feature_flag(
                                 &crate::session::vars::ENABLE_GRACEFUL_CLUSTER_RECONFIGURATION,
                             )?;
+                        }
+                        AlterClusterPlanStrategy::UntilCaughtUp { .. } => {
+                            sql_bail!("ALTER CLUSTER .. WITH ( WAIT UNTIL CAUGHT UP...) is not yet implemented");
                         }
                     }
 
