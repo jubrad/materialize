@@ -52,6 +52,7 @@ use mz_storage_types::connections::PostgresConnection;
 use mz_storage_types::read_policy::ReadPolicy;
 use mz_storage_types::sources::GenericSourceConnection;
 use serde_json::json;
+use timely::Container;
 use tracing::{event, info_span, warn, Instrument, Level};
 
 use crate::active_compute_sink::{ActiveComputeSink, ActiveComputeSinkRetireReason};
@@ -932,7 +933,7 @@ impl Coordinator {
     /// Drops all pending replicas for a set of clusters
     /// that are undergoing reconfiguration.
     pub async fn drop_reconfiguration_replicas(&mut self, cluster_ids: BTreeSet<ClusterId>) {
-        let pending_replica_drops_by_cluster: Vec<Vec<DropObjectInfo>> = cluster_ids
+        let pending_cluster_ops: Vec<Op> = cluster_ids
             .iter()
             .map(|c| {
                 self.catalog()
@@ -950,9 +951,16 @@ impl Coordinator {
                     })
                     .collect::<Vec<DropObjectInfo>>()
             })
+            .filter_map(|pending_replica_drop_ops_by_cluster| {
+                match pending_replica_drop_ops_by_cluster.len() {
+                    0 => None,
+                    _ => Some(Op::DropObjects(pending_replica_drop_ops_by_cluster)),
+                }
+            })
             .collect();
-        for cluster_replicas in pending_replica_drops_by_cluster {
-            self.catalog_transact(None, vec![Op::DropObjects(cluster_replicas)])
+        tracing::error!("cleaning pending replicas!");
+        if pending_cluster_ops.is_empty() {
+            self.catalog_transact(None, pending_cluster_ops)
                 .await
                 .unwrap_or_terminate("cannot fail to drop replicas");
         }
