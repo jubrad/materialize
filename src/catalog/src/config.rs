@@ -104,6 +104,22 @@ pub struct BuiltinItemMigrationConfig {
 pub struct ClusterReplicaSizeMap(pub BTreeMap<String, ReplicaAllocation>);
 
 impl ClusterReplicaSizeMap {
+    pub fn parse_from_str(s: &str, credit_consumption_from_memory: bool) -> anyhow::Result<Self> {
+        let mut cluster_replica_sizes: BTreeMap<String, ReplicaAllocation> =
+            serde_json::from_str(s)?;
+        if credit_consumption_from_memory {
+            for (_, replica) in cluster_replica_sizes.iter_mut() {
+                let Some(memory_limit) = replica.memory_limit else {
+                    bail!("No memory limit found in cluster definition for {name}");
+                };
+                replica.credits_per_hour = Numeric::from(
+                    (memory_limit.0 * replica.scale * u64::try_from(replica.workers)?).0,
+                ) / Numeric::from(1 * GIB);
+            }
+        }
+        Ok(Self(cluster_replica_sizes))
+    }
+
     /// Iterate all enabled (not disabled) replica allocations, with their name.
     pub fn enabled_allocations(&self) -> impl Iterator<Item = (&String, &ReplicaAllocation)> {
         self.0.iter().filter(|(_, a)| !a.disabled)

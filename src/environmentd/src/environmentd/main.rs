@@ -1026,8 +1026,11 @@ fn run(mut args: Args) -> Result<(), anyhow::Error> {
         },
     };
 
-    let cluster_replica_sizes: ClusterReplicaSizeMap =
-        serde_json::from_str(&args.cluster_replica_sizes).context("parsing replica size map")?;
+    let cluster_replica_sizes = ClusterReplicaSizeMap::parse_from_str(
+        &args.cluster_replica_sizes,
+        !license_key.allow_credit_consumption_override,
+    )
+    .context("parsing replica size map")?;
 
     emit_boot_diagnostics!(&BUILD_INFO);
     sys::adjust_rlimits();
