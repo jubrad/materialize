@@ -112,10 +112,13 @@ impl ClusterReplicaSizeMap {
         let mut cluster_replica_sizes: BTreeMap<String, ReplicaAllocation> =
             serde_json::from_str(s)?;
         if credit_consumption_from_memory {
-            for (name, replica) in cluster_replica_sizes.iter_mut() {
-                let Some(memory_limit) = replica.memory_limit else {
-                    bail!("No memory limit found in cluster definition for {name}");
-                };
+            for (_, replica) in cluster_replica_sizes.iter_mut() {
+                // let Some(memory_limit) = replica.memory_limit else {
+                //     bail!("No memory limit found in cluster definition for {name}");
+                // };
+                let memory_limit = replica
+                    .memory_limit
+                    .unwrap_or(MemoryLimit(ByteSize(4294967296)));
                 replica.credits_per_hour = Numeric::from(
                     (memory_limit.0 * replica.scale * u64::try_from(replica.workers)?).0,
                 ) / Numeric::from(1 * GIB);

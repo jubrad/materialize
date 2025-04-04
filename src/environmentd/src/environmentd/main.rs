@@ -1056,7 +1056,8 @@ fn run(mut args: Args) -> Result<(), anyhow::Error> {
 
     let cluster_replica_sizes = ClusterReplicaSizeMap::parse_from_str(
         &args.cluster_replica_sizes,
-        !license_key.allow_credit_consumption_override,
+        true,
+        // !license_key.allow_credit_consumption_override,
     )
     .context("parsing replica size map")?;
 
