@@ -365,6 +365,10 @@ impl HttpServer {
                     }),
                 )
                 .route(
+                    "/metrics/custom/:exporter_name",
+                    routing::get(sql::handle_promsql_v2),
+                )
+                .route(
                     "/api/livez",
                     routing::get(mz_http_util::handle_liveness_check),
                 )
@@ -746,9 +750,11 @@ async fn http_auth(
     }
     // If we've already passed some other auth, just use that.
     if req.extensions().get::<AuthedUser>().is_some() {
+        warn!("Got existing user");
         return Ok(next.run(req).await);
     }
     let creds = if let Some(basic) = req.headers().typed_get::<Authorization<Basic>>() {
+        warn!("Got basic auth!");
         Some(Credentials::Password {
             username: basic.username().to_owned(),
             password: Password(basic.password().to_owned()),
@@ -760,6 +766,7 @@ async fn http_auth(
     } else {
         None
     };
+    warn!("Got creds: {}", creds.is_some());
 
     let user = auth(&authenticator, creds, allowed_roles).await?;
 

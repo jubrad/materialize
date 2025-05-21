@@ -21,9 +21,11 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
+use axum_extra::TypedHeader;
 use futures::Future;
 use futures::future::BoxFuture;
 
+use headers::ContentType;
 use http::StatusCode;
 use itertools::izip;
 use mz_adapter::client::RecordFirstRowStream;
@@ -46,8 +48,8 @@ use mz_sql::ast::{CopyDirection, CopyStatement, CopyTarget, Raw, Statement, Stat
 use mz_sql::parse::StatementParseResult;
 use mz_sql::plan::Plan;
 use mz_sql::session::metadata::SessionMetadata;
-use prometheus::Opts;
 use prometheus::core::{AtomicF64, GenericGaugeVec};
+use prometheus::{Encoder, Opts};
 use serde::{Deserialize, Serialize};
 use tokio::{select, time};
 use tokio_postgres::error::SqlState;
@@ -291,6 +293,165 @@ pub async fn handle_promsql(
     }
 
     metrics_registry
+}
+
+struct MetricViewMetadata {
+    metric_name: String,
+    metric_type: String,
+    help: String,
+    database: String,
+    schema: String,
+    view: String,
+    value_column_name: String,
+}
+
+pub async fn handle_promsql_v2(
+    mut client: AuthedClient,
+    Path(metrics_registry_name): Path<String>,
+) -> impl IntoResponse {
+    // create an indexed view of:
+    // metrics_registry_name
+    // metric_name
+    // metric_type
+    // help
+    // view
+    // value_column_name
+    //
+    // create indexed views for each metric:
+    // value_column
+    // label_column 1
+    // label_column 2
+    // label_column 3
+    // label_column ..n
+
+    // TODO add SQL support for creating metrics endpoints, and get this from an internal table.
+    // TODO prevent SQL injection
+    let query = format!(
+        "SET auto_route_catalog_queries = true; SELECT metric_name, metric_type, help, database, schema, view, value_column_name from materialize.public.metrics_registries WHERE metrics_registry_name = '{}'",
+        metrics_registry_name
+    );
+    let mut metrics_to_query_res = SqlResponse {
+        results: Vec::new(),
+    };
+    // TODO skip to reasonable types, don't do weird conversions
+    execute_request(
+        &mut client,
+        SqlRequest::Simple { query },
+        &mut metrics_to_query_res,
+    )
+    .await
+    // TODO handle errors
+    .expect("TODO handle errors");
+
+    let metrics_to_query: Vec<_> = match metrics_to_query_res.results.as_slice() {
+        [SqlResult::Ok { .. }, SqlResult::Rows { rows, .. }] => rows
+            .into_iter()
+            .map(|row| MetricViewMetadata {
+                // TODO why is this quoted?
+                metric_name: row[0].to_string().trim_matches('"').to_owned(),
+                metric_type: row[1].to_string().trim_matches('"').to_owned(),
+                help: row[2].to_string().trim_matches('"').to_owned(),
+                database: row[3].to_string().trim_matches('"').to_owned(),
+                schema: row[4].to_string().trim_matches('"').to_owned(),
+                view: row[5].to_string().trim_matches('"').to_owned(),
+                value_column_name: row[6].to_string().trim_matches('"').to_owned(),
+            })
+            .collect(),
+        // TODO handle errors
+        _ => {
+            warn!(
+                "got unexpected metrics_to_query response: {:?}",
+                metrics_to_query_res
+            );
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "".to_string()));
+        }
+    };
+
+    let metrics_registry = MetricsRegistry::new();
+    let mut metrics_by_name = BTreeMap::new();
+
+    for metric in metrics_to_query {
+        let query = format!(
+            "SET auto_route_catalog_queries = true; SELECT * from \"{}\".\"{}\".\"{}\"",
+            metric.database, metric.schema, metric.view,
+        );
+        warn!("running query: {}", &query);
+        let mut res = SqlResponse {
+            results: Vec::new(),
+        };
+        // TODO skip to reasonable types, don't do weird conversions
+        execute_request(&mut client, SqlRequest::Simple { query }, &mut res)
+            .await
+            // TODO handle errors
+            .expect("TODO handle errors");
+
+        let (rows, desc) = match res.results.as_slice() {
+            [SqlResult::Ok { .. }, SqlResult::Rows { rows, desc, .. }] => (rows, desc),
+            // TODO handle errors
+            _ => {
+                warn!("got unexpected metrics view response: {:?}", res);
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, "".to_string()));
+            }
+        };
+        //    let mut label_values = desc.columns.iter()
+        //.filter(|col| col.name != metric.value_column_name)
+        //    let value
+        //})
+        //.collect(),
+
+        // TODO handle other types
+        let gauge_vec = metrics_by_name
+            .entry(metric.metric_name.to_string())
+            .or_insert_with(|| {
+                let mut label_names: Vec<String> = desc
+                    .columns
+                    .iter()
+                    .filter(|col| col.name != metric.value_column_name)
+                    .map(|col| col.name.clone())
+                    .collect();
+
+                // TODO?
+                //if query.per_replica {
+                //    label_names.extend(PER_REPLICA_LABELS.iter().map(|label| label.to_string()));
+                //}
+
+                metrics_registry.register::<GenericGaugeVec<AtomicF64>>(MakeCollectorOpts {
+                    opts: Opts::new(metric.metric_name, metric.help).variable_labels(label_names),
+                    buckets: None,
+                })
+            });
+
+        for row in rows {
+            let mut label_values = desc
+                .columns
+                .iter()
+                .zip(row)
+                .filter(|(col, _)| col.name != metric.value_column_name)
+                .map(|(_, val)| val.as_str().expect("must be string"))
+                .collect::<Vec<_>>();
+
+            let value = desc
+                .columns
+                .iter()
+                .zip(row)
+                .find(|(col, _)| col.name == metric.value_column_name)
+                .map(|(_, val)| val.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0))
+                .unwrap_or(0.0);
+
+            gauge_vec
+                .get_metric_with_label_values(&label_values)
+                .expect("valid labels")
+                .set(value);
+        }
+    }
+
+    // TODO convert metrics registry into a response
+    let mut buffer = Vec::new();
+    let encoder = prometheus::TextEncoder::new();
+    encoder
+        .encode(&metrics_registry.gather(), &mut buffer)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok::<_, (StatusCode, String)>((TypedHeader(ContentType::text()), buffer))
 }
 
 pub async fn handle_sql(
