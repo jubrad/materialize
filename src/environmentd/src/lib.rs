@@ -363,6 +363,7 @@ impl Listeners {
                     internal: true,
                     metrics: true,
                     profiling: true,
+                    endpoint_api: true,
                 },
             });
             mz_server_core::serve(ServeConfig {
@@ -852,6 +853,7 @@ impl Listeners {
                     internal: false,
                     metrics: false,
                     profiling: false,
+                    endpoint_api: false,
                 },
             });
             mz_server_core::serve(ServeConfig {

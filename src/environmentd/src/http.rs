@@ -321,6 +321,13 @@ impl HttpServer {
             router = router.merge(leader_router);
         }
 
+        if routes_enabled.endpoint_api {
+            base_router = base_router.merge(Router::new().route(
+                "/api/endpoint/:cluster/:database/:schema/:view",
+                routing::get(sql::handle_endpoint_query),
+            ));
+        }
+
         if routes_enabled.metrics {
             let metrics_router = Router::new()
                 .route(
@@ -442,6 +449,31 @@ impl Server for HttpServer {
         })
     }
 }
+
+//pub async fn handle_endpoint(
+//    mut client: AuthedClient,
+//    Path((cluster, database, schema, view)): Path<(String, String, String, String)>,
+//) -> impl IntoResponse {
+//    //let adapter_client = adapter_client_rx.clone().await.expect("sender not dropped");
+//    // TODO resolve endpoint name to a globalID?
+//    // TODO lookup endpoint_name?
+//    // SELECT database, schema, name FROM mz_internal.mz_show_my_object_privileges WHERE privilege_type = 'SELECT' and object_type = 'table';
+//    //
+//    //
+//    //
+//    // TODO enforce cluster is an ident
+//    // TODO enforce view is an ident
+//
+//    match sql::execute_endpoint_query(&mut client).await {
+//        Ok(()) => Ok(Json(res)),
+//        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+//    }
+//
+//    let client = &mut client.client;
+//    // TODO get headers?
+//    // TODO get body?
+//    // TODO get query params?
+//}
 
 pub async fn handle_leader_status(
     State(deployment_state_handle): State<DeploymentStateHandle>,

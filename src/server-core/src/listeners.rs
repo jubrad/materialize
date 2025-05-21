@@ -43,4 +43,6 @@ pub struct HttpRoutesEnabled {
     pub metrics: bool,
     /// Include /prof/ endpoint, and enable profiling in the / endpoint (included in base).
     pub profiling: bool,
+    /// Include json select endpoints.
+    pub endpoint_api: bool,
 }

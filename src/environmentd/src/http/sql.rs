@@ -18,7 +18,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
-use axum::extract::{State, WebSocketUpgrade};
+use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use futures::Future;
@@ -52,7 +52,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{select, time};
 use tokio_postgres::error::SqlState;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::http::prometheus::PrometheusSqlQuery;
@@ -108,6 +108,40 @@ impl Error {
 }
 
 static PER_REPLICA_LABELS: &[&str] = &["replica_full_name", "instance_id", "replica_id"];
+
+pub async fn handle_endpoint_query(
+    mut client: AuthedClient,
+    Path((cluster, database, schema, view)): Path<(String, String, String, String)>,
+) -> impl IntoResponse {
+    warn!("handle_endpoint_query");
+    let query = format!(
+        "SET auto_route_catalog_queries = false; SET CLUSTER = '{}'; SELECT * from \"{}\".\"{}\".\"{}\"",
+        cluster, database, schema, view
+    );
+
+    let mut res = SqlResponse {
+        results: Vec::new(),
+    };
+
+    if let Err(e) = execute_request(&mut client, SqlRequest::Simple { query }, &mut res).await {
+        return Err((StatusCode::BAD_REQUEST, e.to_string()));
+    };
+
+    let result = match res.results.as_slice() {
+        // Each query issued is preceded by several SET commands
+        // to make sure it is routed to the right cluster replica.
+        [
+            SqlResult::Ok { .. },
+            SqlResult::Ok { .. },
+            SqlResult::Rows { .. },
+        ] => res.results.pop().unwrap(),
+        _ => {
+            warn!("handle_endpoint_query res.results.as_slice {:?}", res);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "".to_string()));
+        }
+    };
+    Ok(Json(result))
+}
 
 async fn execute_promsql_query(
     client: &mut AuthedClient,
