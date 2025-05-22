@@ -1878,6 +1878,9 @@ impl<'a> Parser<'a> {
         if self.peek_keyword(DATABASE) {
             self.parse_create_database()
                 .map_parser_err(StatementKind::CreateDatabase)
+        } else if self.peek_keyword(API) {
+            self.parse_create_api()
+                .map_parser_err(StatementKind::CreateDatabase)
         } else if self.peek_keyword(SCHEMA) {
             self.parse_create_schema()
                 .map_parser_err(StatementKind::CreateSchema)
@@ -1989,6 +1992,31 @@ impl<'a> Parser<'a> {
         Ok(Statement::CreateDatabase(CreateDatabaseStatement {
             name,
             if_not_exists,
+        }))
+    }
+
+    fn parse_create_api(&mut self) -> Result<Statement<Raw>, ParserError> {
+        self.expect_keyword(API)?;
+        let if_not_exists = self.parse_if_not_exists()?;
+        let name = self.parse_item_name()?;
+        self.expect_keyword(FORMAT)?;
+        let endpoint_type = match self.expect_one_of_keywords(&[PROMETHEUS, JSON])? {
+            PROMETHEUS => PROMETHEUS.to_string(),
+            JSON => JSON.to_string(),
+            _ => unreachable!(),
+        };
+        self.expect_keyword(ON)?;
+        self.expect_keyword(CLUSTER)?;
+        let cluster = self.parse_raw_ident()?;
+        while let Some(t) = self.peek_token() {
+            let _ = self.consume_token(&t);
+        }
+
+        Ok(Statement::CreateApi(CreateApiStatement {
+            name,
+            if_not_exists,
+            endpoint_type,
+            cluster,
         }))
     }
 

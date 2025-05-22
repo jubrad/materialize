@@ -205,6 +205,7 @@ impl From<&ExecuteResponse> for StatementEndedExecutionReason {
             | ExecuteResponse::ClosedCursor
             | ExecuteResponse::Comment
             | ExecuteResponse::Copied(_)
+            | ExecuteResponse::CreatedApi
             | ExecuteResponse::CreatedConnection
             | ExecuteResponse::CreatedDatabase
             | ExecuteResponse::CreatedSchema

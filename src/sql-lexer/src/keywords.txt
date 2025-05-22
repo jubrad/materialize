@@ -38,6 +38,7 @@ Alter
 Analysis
 And
 Any
+Api
 Arity
 Arn
 Arranged
@@ -345,6 +346,7 @@ Privatelink
 Privileges
 Progress
 Projection
+Prometheus
 Protobuf
 Protocol
 Public

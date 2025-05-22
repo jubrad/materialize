@@ -382,6 +382,11 @@ fn generate_rbac_requirements(
     role_id: RoleId,
 ) -> RbacRequirements {
     match plan {
+        Plan::CreateApi(plan::CreateApiPlan { .. }) => RbacRequirements {
+            privileges: vec![(SystemObjectId::System, AclMode::CREATE_CLUSTER, role_id)],
+            item_usage: &CREATE_ITEM_USAGE,
+            ..Default::default()
+        },
         Plan::CreateConnection(plan::CreateConnectionPlan {
             name,
             if_not_exists: _,

@@ -177,6 +177,9 @@ impl Coordinator {
             }
 
             match plan {
+                Plan::CreateApi(_) => {
+                    ctx.retire(Ok(ExecuteResponse::CreatedApi));
+                }
                 Plan::CreateSource(plan) => {
                     let id_ts = self.get_catalog_write_ts().await;
                     let (item_id, global_id) =

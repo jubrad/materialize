@@ -46,6 +46,7 @@ pub enum Statement<T: AstInfo> {
     Copy(CopyStatement<T>),
     Update(UpdateStatement<T>),
     Delete(DeleteStatement<T>),
+    CreateApi(CreateApiStatement<T>),
     CreateConnection(CreateConnectionStatement<T>),
     CreateDatabase(CreateDatabaseStatement),
     CreateSchema(CreateSchemaStatement),
@@ -122,6 +123,7 @@ impl<T: AstInfo> AstDisplay for Statement<T> {
             Statement::Copy(stmt) => f.write_node(stmt),
             Statement::Update(stmt) => f.write_node(stmt),
             Statement::Delete(stmt) => f.write_node(stmt),
+            Statement::CreateApi(stmt) => f.write_node(stmt),
             Statement::CreateConnection(stmt) => f.write_node(stmt),
             Statement::CreateDatabase(stmt) => f.write_node(stmt),
             Statement::CreateSchema(stmt) => f.write_node(stmt),
@@ -201,6 +203,7 @@ pub fn statement_kind_label_value(kind: StatementKind) -> &'static str {
         StatementKind::Copy => "copy",
         StatementKind::Update => "update",
         StatementKind::Delete => "delete",
+        StatementKind::CreateApi => "create_api",
         StatementKind::CreateConnection => "create_connection",
         StatementKind::CreateDatabase => "create_database",
         StatementKind::CreateSchema => "create_schema",
@@ -554,6 +557,30 @@ impl AstDisplay for CreateDatabaseStatement {
     }
 }
 impl_display!(CreateDatabaseStatement);
+
+/// `CREATE API
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CreateApiStatement<T: AstInfo> {
+    pub name: UnresolvedItemName,
+    pub if_not_exists: bool,
+    pub endpoint_type: String,
+    pub cluster: T::ClusterName,
+}
+
+impl<T: AstInfo> AstDisplay for CreateApiStatement<T> {
+    fn fmt<W: fmt::Write>(&self, f: &mut AstFormatter<W>) {
+        f.write_str("CREATE ");
+        f.write_str(&self.endpoint_type);
+        if self.if_not_exists {
+            f.write_str(" IF NOT EXISTS");
+        }
+        f.write_str(" ON");
+        f.write_node(&self.cluster);
+        f.write_str(" FOR ALL INDEXES");
+    }
+}
+
+impl_display_t!(CreateApiStatement);
 
 /// `CREATE SCHEMA`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

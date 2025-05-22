@@ -947,7 +947,8 @@ pub(crate) fn waiting_on_startup_appends(
             ..
         }) => plan.source.depends_on(),
         Plan::ExplainTimestamp(ExplainTimestampPlan { raw_plan, .. }) => raw_plan.depends_on(),
-        Plan::CreateConnection(_)
+        Plan::CreateApi(_)
+        | Plan::CreateConnection(_)
         | Plan::CreateDatabase(_)
         | Plan::CreateSchema(_)
         | Plan::CreateRole(_)

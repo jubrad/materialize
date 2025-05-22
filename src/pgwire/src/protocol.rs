@@ -1814,6 +1814,7 @@ where
             | ExecuteResponse::AlteredObject(..)
             | ExecuteResponse::AlteredRole
             | ExecuteResponse::AlteredSystemConfiguration
+            | ExecuteResponse::CreatedApi { .. }
             | ExecuteResponse::CreatedCluster { .. }
             | ExecuteResponse::CreatedClusterReplica { .. }
             | ExecuteResponse::CreatedConnection { .. }

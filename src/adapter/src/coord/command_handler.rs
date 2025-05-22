@@ -758,6 +758,7 @@ impl Coordinator {
                     | Statement::AlterSystemSet(_)
                     | Statement::AlterTableAddColumn(_)
                     | Statement::AlterNetworkPolicy(_)
+                    | Statement::CreateApi(_)
                     | Statement::CreateCluster(_)
                     | Statement::CreateClusterReplica(_)
                     | Statement::CreateConnection(_)

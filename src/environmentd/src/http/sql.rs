@@ -1572,6 +1572,7 @@ async fn execute_stmt<S: ResultSender>(
         | ExecuteResponse::CreatedDatabase { .. }
         | ExecuteResponse::CreatedSchema { .. }
         | ExecuteResponse::CreatedRole
+        | ExecuteResponse::CreatedApi { .. }
         | ExecuteResponse::CreatedCluster { .. }
         | ExecuteResponse::CreatedClusterReplica { .. }
         | ExecuteResponse::CreatedTable { .. }

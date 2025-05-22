@@ -131,6 +131,7 @@ use self::with_options::TryFromValue;
 #[derive(Debug, EnumKind)]
 #[enum_kind(PlanKind)]
 pub enum Plan {
+    CreateApi(CreateApiPlan),
     CreateConnection(CreateConnectionPlan),
     CreateDatabase(CreateDatabasePlan),
     CreateSchema(CreateSchemaPlan),
@@ -262,6 +263,7 @@ impl Plan {
                 PlanKind::Subscribe,
                 PlanKind::CopyTo,
             ],
+            StatementKind::CreateApi => &[PlanKind::CreateApi],
             StatementKind::CreateCluster => &[PlanKind::CreateCluster],
             StatementKind::CreateClusterReplica => &[PlanKind::CreateClusterReplica],
             StatementKind::CreateConnection => &[PlanKind::CreateConnection],
@@ -326,6 +328,7 @@ impl Plan {
     /// Returns a human readable name of the plan. Meant for use in messages sent back to a user.
     pub fn name(&self) -> &str {
         match self {
+            Plan::CreateApi(_) => "create api",
             Plan::CreateConnection(_) => "create connection",
             Plan::CreateDatabase(_) => "create database",
             Plan::CreateSchema(_) => "create schema",
@@ -679,6 +682,14 @@ pub struct CreateSourcePlanBundle {
     /// Populated for top-level sources that can contain subsources/tables
     /// and used during sequencing to populate the appropriate catalog fields.
     pub available_source_references: Option<SourceReferences>,
+}
+
+#[derive(Debug)]
+pub struct CreateApiPlan {
+    pub name: QualifiedItemName,
+    pub if_not_exists: bool,
+    pub cluster: ClusterId,
+    pub endpoint_type: String,
 }
 
 #[derive(Debug)]

@@ -279,6 +279,8 @@ pub enum ExecuteResponse {
         params: CopyFormatParams<'static>,
         ctx_extra: ExecuteContextExtra,
     },
+    /// The requested api was created.
+    CreatedApi,
     /// The requested connection was created.
     CreatedConnection,
     /// The requested database was created.
@@ -462,6 +464,7 @@ impl TryInto<ExecuteResponse> for ExecuteResponseKind {
             ExecuteResponseKind::Copied => Err(()),
             ExecuteResponseKind::CopyTo => Err(()),
             ExecuteResponseKind::CopyFrom => Err(()),
+            ExecuteResponseKind::CreatedApi => Ok(ExecuteResponse::CreatedApi),
             ExecuteResponseKind::CreatedConnection => Ok(ExecuteResponse::CreatedConnection),
             ExecuteResponseKind::CreatedDatabase => Ok(ExecuteResponse::CreatedDatabase),
             ExecuteResponseKind::CreatedSchema => Ok(ExecuteResponse::CreatedSchema),
@@ -529,6 +532,7 @@ impl ExecuteResponse {
             Copied(n) => Some(format!("COPY {}", n)),
             CopyTo { .. } => None,
             CopyFrom { .. } => None,
+            CreatedApi { .. } => Some("CREATE API".into()),
             CreatedConnection { .. } => Some("CREATE CONNECTION".into()),
             CreatedDatabase { .. } => Some("CREATE DATABASE".into()),
             CreatedSchema { .. } => Some("CREATE SCHEMA".into()),
@@ -621,6 +625,7 @@ impl ExecuteResponse {
             PlanKind::CopyTo => &[ExecuteResponseKind::Copied],
             PlanKind::Comment => &[ExecuteResponseKind::Comment],
             CommitTransaction => &[TransactionCommitted, TransactionRolledBack],
+            CreateApi => &[CreatedApi],
             CreateConnection => &[CreatedConnection],
             CreateDatabase => &[CreatedDatabase],
             CreateSchema => &[CreatedSchema],

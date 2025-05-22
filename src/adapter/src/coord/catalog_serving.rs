@@ -68,7 +68,8 @@ pub fn auto_run_on_catalog_server<'a, 's, 'p>(
             raw_plan.depends_on(),
             raw_plan.could_run_expensive_function(),
         ),
-        Plan::CreateConnection(_)
+        Plan::CreateApi(_)
+        | Plan::CreateConnection(_)
         | Plan::CreateDatabase(_)
         | Plan::CreateSchema(_)
         | Plan::CreateRole(_)
