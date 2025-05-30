@@ -809,8 +809,12 @@ fn run(mut args: Args) -> Result<(), anyhow::Error> {
         args.cors_allowed_origin
     } else {
         let port = args.http_listen_addr.port();
+        let internal_port = args.internal_http_listen_addr.port();
         vec![
+            HeaderValue::from_str("").unwrap(),
             HeaderValue::from_str(&format!("http://localhost:{}", port)).unwrap(),
+            HeaderValue::from_str(&format!("http://localhost:{}", internal_port)).unwrap(),
+            HeaderValue::from_str(&format!("http://localhost:{}", 5173)).unwrap(),
             HeaderValue::from_str(&format!("http://127.0.0.1:{}", port)).unwrap(),
             HeaderValue::from_str(&format!("http://[::1]:{}", port)).unwrap(),
             HeaderValue::from_str(&format!("https://localhost:{}", port)).unwrap(),

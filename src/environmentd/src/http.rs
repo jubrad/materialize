@@ -386,13 +386,15 @@ impl HttpServer {
             .layer(
                 CorsLayer::new()
                     .allow_credentials(false)
-                    .allow_headers([
-                        AUTHORIZATION,
-                        CONTENT_TYPE,
-                        HeaderName::from_static("x-materialize-version"),
-                    ])
+                    // .allow_credentials(true)
+                    .allow_headers(
+                        Any, // AUTHORIZATION,
+                            // CONTENT_TYPE,
+                            // HeaderName::from_static("x-materialize-version"),
+                    )
                     .allow_methods(Any)
-                    .allow_origin(allowed_origin)
+                    .allow_origin(Any)
+                    // allowed_origin)
                     .expose_headers(Any)
                     .max_age(Duration::from_secs(60) * 60),
             );
