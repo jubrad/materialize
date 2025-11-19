@@ -8,14 +8,6 @@ menu:
 
 The following provides a general outline and examples for upgrading Materialize.
 
-For a more specific set of steps, please consult the deployment-specific upgrade
-documentation:
- - [Minikube](/installation/install-on-local-minikube/upgrade-on-local-minikube/)
- - [Kind](/installation/install-on-local-kind/upgrade-on-local-kind/)
- - [AWS](/installation/install-on-aws/upgrade-on-aws/)
- - [GCP](/installation/install-on-gcp/upgrade-on-gcp/)
- - [Azure](/installation/install-on-azure/upgrade-on-azure/)
-
 ***When upgrading always***:
 - Upgrade the operator first and ensure version compatibility between the operator and the Materialize instance you are upgrading to.
 - Upgrade your Materialize instances after upgrading the operator to ensure compatibility.
