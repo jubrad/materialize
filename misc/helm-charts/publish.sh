@@ -197,6 +197,7 @@ else
   # cd materialize-terraform-self-managed
   # sed -i "s/\".*\"\(.*\) # META: helm-chart version/\"$BUILDKITE_TAG\"\\1 # META: helm-chart version/" aws/modules/operator/variables.tf azure/modules/operator/variables.tf gcp/modules/operator/variables.tf
   # sed -i "s/\".*\"\(.*\) # META: mz version/\"$BUILDKITE_TAG\"\\1 # META: mz version/" kubernetes/modules/materialize-instance/variables.tf
+  # echo "$BUILDKITE_TAG" > materialize_version.txt
   # for dir in aws/modules/operator azure/modules/operator gcp/modules/operator kubernetes/modules/materialize-instance; do
   #   terraform-docs --config .terraform-docs.yml $dir > $dir/README.md
   # done
