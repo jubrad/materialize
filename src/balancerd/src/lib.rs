@@ -670,11 +670,21 @@ impl PgwireBalancer {
             .tenant
             .as_ref()
             .map(|tenant| metrics.tenant_connections(tenant));
-        let Ok(mut mz_stream) =
-            Self::init_stream(conn, resolved.addr, resolved.password, params, internal_tls).await
-        else {
-            return Ok(());
-        };
+        let mut mz_stream =
+            match Self::init_stream(conn, resolved.addr, resolved.password, params, internal_tls)
+                .await
+            {
+                Ok(stream) => stream,
+                Err(e) => {
+                    error!("failed to connect to upstream server: {e}");
+                    return conn
+                        .send(ErrorResponse::fatal(
+                            SqlState::SQLSERVER_REJECTED_ESTABLISHMENT_OF_SQLCONNECTION,
+                            "upstream server not available",
+                        ))
+                        .await;
+                }
+            };
 
         let mut client_counter = CountingConn::new(conn.inner_mut());
 
