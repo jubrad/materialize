@@ -32,6 +32,42 @@ pub const LAST_KNOWN_ACTIVE_GENERATION_ANNOTATION: &str =
 pub mod v1alpha1 {
     use super::*;
 
+    /// Source for an extra volume mount - either a ConfigMap or a Secret.
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "camelCase", untagged)]
+    pub enum VolumeSource {
+        /// Mount a key from a ConfigMap.
+        ConfigMap {
+            /// Name of the ConfigMap.
+            config_map_name: String,
+            /// Key within the ConfigMap to mount.
+            config_map_key: String,
+        },
+        /// Mount a key from a Secret.
+        Secret {
+            /// Name of the Secret.
+            secret_name: String,
+            /// Key within the Secret to mount.
+            secret_key: String,
+        },
+    }
+
+    /// An extra volume to mount into the environmentd container.
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ExtraVolume {
+        /// Unique name for this volume within the pod.
+        pub name: String,
+        /// The source of the volume (ConfigMap or Secret).
+        #[serde(flatten)]
+        pub source: VolumeSource,
+        /// Path where the file should be mounted in the container.
+        pub mount_path: String,
+        /// If set, an environment variable with this name will be created
+        /// with the value set to the mount path.
+        pub set_env: Option<String>,
+    }
+
     #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
     pub enum MaterializeRolloutStrategy {
         /// Create a new generation of pods, leaving the old generation around until the
@@ -107,6 +143,10 @@ pub mod v1alpha1 {
         pub environmentd_extra_args: Option<Vec<String>>,
         /// Extra environment variables to pass to the environmentd binary.
         pub environmentd_extra_env: Option<Vec<EnvVar>>,
+        /// Extra volumes to mount into the environmentd container.
+        /// Each volume can source its data from either a ConfigMap or a Secret,
+        /// and optionally set an environment variable pointing to the mount path.
+        pub environmentd_extra_volumes: Option<Vec<ExtraVolume>>,
         /// {{<warning>}}
         /// Deprecated.
         ///

@@ -115,6 +115,14 @@
         "deprecated": false
       },
       {
+        "name": "environmentdExtraVolumes",
+        "type": "Array<ExtraVolume>",
+        "description": "Extra volumes to mount into the environmentd container.\nEach volume can source its data from either a ConfigMap or a Secret,\nand optionally set an environment variable pointing to the mount path.\n\nExample for mounting a FoundationDB cluster file:\n```yaml\nenvironmentdExtraVolumes:\n  - name: fdb-cluster\n    configMapName: my-fdb-config\n    configMapKey: cluster-file\n    mountPath: /fdb-cluster/fdb.cluster\n    setEnv: FDB_CLUSTER_FILE\n```",
+        "default": null,
+        "required": false,
+        "deprecated": false
+      },
+      {
         "name": "environmentdResourceRequirements",
         "type": "io.k8s.api.core.v1.ResourceRequirements",
         "description": "Resource requirements for the environmentd pod.",
@@ -549,6 +557,67 @@
         "name": "optional",
         "type": "Bool",
         "description": "Specify whether the ConfigMap or its key must be defined",
+        "default": null,
+        "required": false,
+        "deprecated": false
+      }
+    ]
+  ],
+  [
+    "ExtraVolume",
+    [
+      {
+        "name": "name",
+        "type": "String",
+        "description": "Unique name for this volume within the pod.",
+        "default": null,
+        "required": true,
+        "deprecated": false
+      },
+      {
+        "name": "configMapName",
+        "type": "String",
+        "description": "Name of the ConfigMap to mount. Mutually exclusive with `secretName`.",
+        "default": null,
+        "required": false,
+        "deprecated": false
+      },
+      {
+        "name": "configMapKey",
+        "type": "String",
+        "description": "Key within the ConfigMap to mount. Required if `configMapName` is set.",
+        "default": null,
+        "required": false,
+        "deprecated": false
+      },
+      {
+        "name": "secretName",
+        "type": "String",
+        "description": "Name of the Secret to mount. Mutually exclusive with `configMapName`.",
+        "default": null,
+        "required": false,
+        "deprecated": false
+      },
+      {
+        "name": "secretKey",
+        "type": "String",
+        "description": "Key within the Secret to mount. Required if `secretName` is set.",
+        "default": null,
+        "required": false,
+        "deprecated": false
+      },
+      {
+        "name": "mountPath",
+        "type": "String",
+        "description": "Path where the file should be mounted in the container.",
+        "default": null,
+        "required": true,
+        "deprecated": false
+      },
+      {
+        "name": "setEnv",
+        "type": "String",
+        "description": "If set, an environment variable with this name will be created with the value set to the mount path.",
         "default": null,
         "required": false,
         "deprecated": false

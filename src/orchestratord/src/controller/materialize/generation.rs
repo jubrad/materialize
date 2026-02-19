@@ -44,7 +44,7 @@ use crate::k8s::{apply_resource, delete_resource, get_resource};
 use crate::tls::issuer_ref_defined;
 use mz_cloud_provider::CloudProvider;
 use mz_cloud_resources::crd::ManagedResource;
-use mz_cloud_resources::crd::materialize::v1alpha1::Materialize;
+use mz_cloud_resources::crd::materialize::v1alpha1::{Materialize, VolumeSource};
 use mz_ore::instrument;
 
 static V140_DEV0: LazyLock<Version> = LazyLock::new(|| Version {
@@ -972,6 +972,75 @@ fn create_environmentd_statefulset_object(
     // Add user-specified extra arguments.
     if let Some(extra_args) = &mz.spec.environmentd_extra_args {
         args.extend(extra_args.iter().cloned());
+    }
+
+    // Mount any extra volumes configured by the user.
+    if let Some(ref extra_volumes) = mz.spec.environmentd_extra_volumes {
+        for extra_volume in extra_volumes {
+            let file_name = extra_volume.mount_path.rsplit('/').next().unwrap_or("data");
+
+            match &extra_volume.source {
+                VolumeSource::ConfigMap {
+                    config_map_name,
+                    config_map_key,
+                } => {
+                    volumes.push(Volume {
+                        name: extra_volume.name.clone(),
+                        config_map: Some(ConfigMapVolumeSource {
+                            default_mode: Some(0o400),
+                            name: config_map_name.to_owned(),
+                            items: Some(vec![KeyToPath {
+                                key: config_map_key.clone(),
+                                path: file_name.to_string(),
+                                ..Default::default()
+                            }]),
+                            optional: Some(false),
+                        }),
+                        ..Default::default()
+                    });
+                }
+                VolumeSource::Secret {
+                    secret_name,
+                    secret_key,
+                } => {
+                    volumes.push(Volume {
+                        name: extra_volume.name.clone(),
+                        secret: Some(SecretVolumeSource {
+                            default_mode: Some(0o400),
+                            secret_name: Some(secret_name.to_owned()),
+                            items: Some(vec![KeyToPath {
+                                key: secret_key.clone(),
+                                path: file_name.to_string(),
+                                ..Default::default()
+                            }]),
+                            optional: Some(false),
+                        }),
+                        ..Default::default()
+                    });
+                }
+            }
+
+            let mount_dir = extra_volume
+                .mount_path
+                .rsplit_once('/')
+                .map(|(dir, _)| dir)
+                .unwrap_or(&extra_volume.mount_path);
+
+            volume_mounts.push(VolumeMount {
+                name: extra_volume.name.clone(),
+                mount_path: mount_dir.to_string(),
+                read_only: Some(true),
+                ..Default::default()
+            });
+
+            if let Some(ref env_name) = extra_volume.set_env {
+                env.push(EnvVar {
+                    name: env_name.clone(),
+                    value: Some(extra_volume.mount_path.clone()),
+                    ..Default::default()
+                });
+            }
+        }
     }
 
     let probe = Probe {
