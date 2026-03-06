@@ -21,8 +21,9 @@ use k8s_openapi::jiff::Timestamp;
 use kube::api::PostParams;
 use kube::runtime::controller::Action;
 use kube::runtime::reflector::Store;
-use kube::{Api, Client, ResourceExt};
-use tracing::{instrument, trace};
+use kube::{Api, Client, Resource};
+use mz_ore::instrument;
+use tracing::trace;
 
 use crate::Error;
 use crate::k8s::make_reflector;
@@ -163,7 +164,7 @@ impl k8s_controller::Context for Context {
 
     const FINALIZER_NAME: Option<&'static str> = Some("orchestratord.materialize.cloud/cluster");
 
-    #[instrument(fields(cluster_name = %cluster.name_unchecked()))]
+    #[instrument(fields())]
     async fn apply(
         &self,
         client: Client,

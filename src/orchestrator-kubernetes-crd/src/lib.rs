@@ -26,16 +26,15 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::num::NonZero;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use futures::stream::BoxStream;
-use futures::{StreamExt, TryStreamExt};
-use kube::api::{DeleteParams, ObjectMeta, Patch, PatchParams, PostParams};
+use futures::StreamExt;
+use kube::api::{DeleteParams, ObjectMeta, Patch, PatchParams};
 use kube::runtime::watcher::{self, Event};
-use kube::{Api, Client, Resource, ResourceExt};
+use kube::{Api, Client};
 use tracing::{debug, trace, warn};
 
 use mz_cloud_resources::crd::materialize_cluster_replica::v1alpha1::{
@@ -68,10 +67,17 @@ pub struct KubernetesCrdOrchestratorConfig {
 /// This orchestrator creates [`MaterializeClusterReplica`] CRDs instead of
 /// directly creating StatefulSets. The orchestratord controller watches these
 /// CRDs and creates the underlying Kubernetes resources.
-#[derive(Debug)]
 pub struct KubernetesCrdOrchestrator {
     client: Client,
     config: KubernetesCrdOrchestratorConfig,
+}
+
+impl fmt::Debug for KubernetesCrdOrchestrator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KubernetesCrdOrchestrator")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl KubernetesCrdOrchestrator {
@@ -411,7 +417,7 @@ impl NamespacedOrchestrator for NamespacedKubernetesCrdOrchestrator {
                 let gen_suffix = gen_suffix.clone();
                 async move {
                     match event {
-                        Ok(Event::Applied(replica)) => {
+                        Ok(Event::Apply(replica)) | Ok(Event::InitApply(replica)) => {
                             let name = replica.name_unchecked();
                             // Only process replicas from this generation
                             if !name.ends_with(&gen_suffix) {
@@ -446,7 +452,7 @@ impl NamespacedOrchestrator for NamespacedKubernetesCrdOrchestrator {
                                 time: Utc::now(),
                             }))
                         }
-                        Ok(Event::Deleted(replica)) => {
+                        Ok(Event::Delete(replica)) => {
                             let name = replica.name_unchecked();
                             if !name.ends_with(&gen_suffix) {
                                 return None;
@@ -460,7 +466,8 @@ impl NamespacedOrchestrator for NamespacedKubernetesCrdOrchestrator {
                                 time: Utc::now(),
                             }))
                         }
-                        Ok(Event::Restarted(_)) => None,
+                        // Init and InitDone are bookkeeping events, no action needed
+                        Ok(Event::Init) | Ok(Event::InitDone) => None,
                         Err(e) => Some(Err(anyhow::anyhow!("watch error: {}", e))),
                     }
                 }

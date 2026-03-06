@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use k8s_openapi::jiff::Timestamp;
-use kube::{CustomResource, Resource, ResourceExt};
+use kube::{CustomResource, Resource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

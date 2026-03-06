@@ -7095,6 +7095,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "mz-orchestrator-kubernetes-crd"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "k8s-openapi",
+ "kube",
+ "mz-cloud-resources",
+ "mz-orchestrator",
+ "mz-ore",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "workspace-hack",
+]
+
+[[package]]
 name = "mz-orchestrator-process"
 version = "0.0.0"
 dependencies = [

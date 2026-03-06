@@ -22,7 +22,6 @@
 //! the Kubernetes resources.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use k8s_openapi::api::apps::v1::{StatefulSet, StatefulSetSpec, StatefulSetUpdateStrategy};
 use k8s_openapi::api::core::v1::{
@@ -36,17 +35,17 @@ use k8s_openapi::jiff::Timestamp;
 use kube::api::{ObjectMeta, PostParams};
 use kube::runtime::controller::Action;
 use kube::runtime::reflector::{ObjectRef, Store};
-use kube::{Api, Client, Resource, ResourceExt};
+use kube::{Api, Client, Resource};
 use maplit::btreemap;
 use sha2::{Digest, Sha256};
-use tracing::{instrument, trace};
+use mz_ore::instrument;
+use tracing::trace;
 
 use crate::Error;
 use crate::k8s::{apply_resource, make_reflector};
 use mz_cloud_resources::crd::ManagedResource;
 use mz_cloud_resources::crd::materialize_cluster_replica::v1alpha1::{
-    ClusterLabelSelector, ClusterLabelSelectorOperator, MaterializeClusterReplica,
-    MaterializeClusterReplicaStatus, ReplicaPhase,
+    ClusterLabelSelector, ClusterLabelSelectorOperator, MaterializeClusterReplica, ReplicaPhase,
 };
 use mz_orchestrator_kubernetes::KubernetesImagePullPolicy;
 
@@ -389,7 +388,7 @@ impl Context {
     ) -> Option<k8s_openapi::api::core::v1::Affinity> {
         use k8s_openapi::api::core::v1::{
             Affinity, NodeAffinity, NodeSelector, NodeSelectorRequirement, NodeSelectorTerm,
-            PodAffinityTerm, PodAntiAffinity, WeightedPodAffinityTerm,
+            PodAffinityTerm, PodAntiAffinity,
         };
         use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelectorRequirement;
 
@@ -567,7 +566,7 @@ impl k8s_controller::Context for Context {
     const FINALIZER_NAME: Option<&'static str> =
         Some("orchestratord.materialize.cloud/cluster-replica");
 
-    #[instrument(fields(replica_name = %replica.name_unchecked()))]
+    #[instrument(fields())]
     async fn apply(
         &self,
         client: Client,

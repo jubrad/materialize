@@ -326,7 +326,7 @@ async fn run(args: Args) -> Result<(), anyhow::Error> {
                     environmentd_connection_role_arn: args.environmentd_connection_role_arn,
                     aws_secrets_controller_tags: args.aws_secrets_controller_tags,
                     environmentd_availability_zones: args.environmentd_availability_zones,
-                    ephemeral_volume_class: args.ephemeral_volume_class,
+                    ephemeral_volume_class: args.ephemeral_volume_class.clone(),
                     scheduler_name: args.scheduler_name.clone(),
                     enable_security_context: args.enable_security_context,
                     enable_internal_statement_logging: args.enable_internal_statement_logging,
