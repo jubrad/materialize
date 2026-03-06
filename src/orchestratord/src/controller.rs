@@ -8,6 +8,7 @@
 // by the Apache License, Version 2.0.
 
 pub mod balancer;
+pub mod cluster;
 pub mod cluster_replica;
 pub mod console;
 pub mod materialize;

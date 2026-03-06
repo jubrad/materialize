@@ -569,6 +569,16 @@ async fn run(args: Args) -> Result<(), anyhow::Error> {
         .run(),
     );
 
+    mz_ore::task::spawn(
+        || "cluster controller",
+        k8s_controller::Controller::namespaced_all(
+            client.clone(),
+            controller::cluster::Context::new(controller::cluster::Config {}, client.clone()).await,
+            watcher::Config::default().timeout(29),
+        )
+        .run(),
+    );
+
     info!("All tasks started successfully.");
 
     future::pending().await
