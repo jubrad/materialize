@@ -16,7 +16,7 @@ use std::{
 use http::HeaderValue;
 use k8s_openapi::{
     api::{
-        apps::v1::Deployment,
+        apps::v1::{Deployment, StatefulSet},
         core::v1::{
             Affinity, ConfigMap, ResourceRequirements, Service, ServiceAccount, Toleration,
         },
@@ -480,7 +480,7 @@ async fn run(args: Args) -> Result<(), anyhow::Error> {
                     enable_security_context: args.enable_security_context,
                     enable_prometheus_scrape_annotations: args.enable_prometheus_scrape_annotations,
                     image_pull_policy: args.image_pull_policy,
-                    scheduler_name: args.scheduler_name,
+                    scheduler_name: args.scheduler_name.clone(),
                     console_node_selector: args.console_node_selector,
                     console_affinity: args.console_affinity,
                     console_tolerations: args.console_tolerations,
@@ -526,6 +526,43 @@ async fn run(args: Args) -> Result<(), anyhow::Error> {
                     Api::<ConfigMap>::all(client.clone()),
                     watcher::Config::default()
                         .labels("materialize.cloud/mz-resource-id")
+                        .timeout(29),
+                )
+        })
+        .run(),
+    );
+
+    mz_ore::task::spawn(
+        || "cluster replica controller",
+        k8s_controller::Controller::namespaced_all(
+            client.clone(),
+            controller::cluster_replica::Context::new(
+                controller::cluster_replica::Config {
+                    enable_security_context: args.enable_security_context,
+                    enable_prometheus_scrape_annotations: args.enable_prometheus_scrape_annotations,
+                    image_pull_policy: args.image_pull_policy,
+                    scheduler_name: args.scheduler_name.clone(),
+                    ephemeral_volume_storage_class: args.ephemeral_volume_class.clone(),
+                    service_fs_group: None, // TODO: add CLI arg if needed
+                    service_account: None,  // TODO: add CLI arg if needed
+                },
+                client.clone(),
+            )
+            .await,
+            watcher::Config::default().timeout(29),
+        )
+        .with_controller(|controller| {
+            controller
+                .owns(
+                    Api::<StatefulSet>::all(client.clone()),
+                    watcher::Config::default()
+                        .labels("materialize.cloud/mzcr-resource-id")
+                        .timeout(29),
+                )
+                .owns(
+                    Api::<Service>::all(client.clone()),
+                    watcher::Config::default()
+                        .labels("materialize.cloud/mzcr-resource-id")
                         .timeout(29),
                 )
         })
