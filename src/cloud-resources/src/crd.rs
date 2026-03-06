@@ -35,6 +35,8 @@ pub mod balancer;
 pub mod console;
 pub mod generated;
 pub mod materialize;
+pub mod materialize_cluster;
+pub mod materialize_cluster_replica;
 #[cfg(feature = "vpc-endpoints")]
 pub mod vpc_endpoint;
 
