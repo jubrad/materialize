@@ -22,7 +22,10 @@ use kube::{
 use serde::{Serialize, de::DeserializeOwned};
 use tracing::{info, warn};
 
-use mz_cloud_resources::crd::{self, VersionedCrd, register_versioned_crds};
+use mz_cloud_resources::crd::{
+    self, VersionedCrd, materialize_cluster::v1alpha1::MaterializeCluster,
+    materialize_cluster_replica::v1alpha1::MaterializeClusterReplica, register_versioned_crds,
+};
 
 const FIELD_MANAGER: &str = "orchestratord.materialize.cloud";
 
@@ -131,6 +134,15 @@ pub async fn register_crds(
                 VersionedCrd {
                     crds: vec![crd::vpc_endpoint::v1::VpcEndpoint::crd()],
                     stored_version: String::from("v1"),
+                },
+                // Cluster management CRDs
+                VersionedCrd {
+                    crds: vec![MaterializeCluster::crd()],
+                    stored_version: String::from("v1alpha1"),
+                },
+                VersionedCrd {
+                    crds: vec![MaterializeClusterReplica::crd()],
+                    stored_version: String::from("v1alpha1"),
                 },
             ],
             FIELD_MANAGER,
