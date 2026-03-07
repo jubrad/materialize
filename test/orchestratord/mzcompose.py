@@ -2536,21 +2536,21 @@ def setup(c: Composition, args) -> dict[str, Any]:
             "balancerd",
         ]
         c.up(*[Service(service, idle=True) for service in services])
+        tag = get_tag(None)
+        images_to_load = []
         for service in services:
-            spawn.runv(
-                [
-                    "docker",
-                    "tag",
-                    c.compose["services"][service]["image"],
-                    get_image(c.compose["services"][service]["image"], None),
-                ]
-            )
+            full_image = c.compose["services"][service]["image"]
+            tagged_image = get_image(full_image, None)
+            # Tag with full ghcr.io path
+            spawn.runv(["docker", "tag", full_image, tagged_image])
+            images_to_load.append(tagged_image)
+            # Also tag with short name (materialize/{service}) for helm chart compatibility
+            # The helm chart uses repository: materialize/orchestratord format
+            short_image = f"materialize/{service}:{tag}"
+            spawn.runv(["docker", "tag", full_image, short_image])
+            images_to_load.append(short_image)
         spawn.runv(
-            ["kind", "load", "docker-image", "--name", cluster]
-            + [
-                get_image(c.compose["services"][service]["image"], None)
-                for service in services
-            ]
+            ["kind", "load", "docker-image", "--name", cluster] + images_to_load
         )
 
     definition: dict[str, Any] = {}
