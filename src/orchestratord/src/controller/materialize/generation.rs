@@ -736,72 +736,90 @@ fn create_environmentd_statefulset_object(
     }
 
     // Add Kubernetes arguments.
-    args.extend([
-        "--orchestrator=kubernetes".into(),
-        format!(
-            "--orchestrator-kubernetes-service-account={}",
-            &mz.service_account_name()
-        ),
-        format!(
-            "--orchestrator-kubernetes-image-pull-policy={}",
-            config.image_pull_policy.as_kebab_case_str(),
-        ),
-    ]);
-    for selector in &config.clusterd_node_selector {
-        args.push(format!(
-            "--orchestrator-kubernetes-service-node-selector={}={}",
-            selector.key, selector.value,
-        ));
+    if config.use_crd_orchestrator {
+        // Use CRD-based orchestrator: environmentd creates MaterializeClusterReplica CRDs
+        // instead of orchestratord managing StatefulSets directly
+        args.extend([
+            "--orchestrator=kubernetes-crd".into(),
+            format!(
+                "--orchestrator-kubernetes-crd-cluster-ref={}",
+                mz.name_any()
+            ),
+        ]);
+    } else {
+        // Use standard orchestrator: orchestratord manages StatefulSets directly
+        args.extend([
+            "--orchestrator=kubernetes".into(),
+            format!(
+                "--orchestrator-kubernetes-service-account={}",
+                &mz.service_account_name()
+            ),
+            format!(
+                "--orchestrator-kubernetes-image-pull-policy={}",
+                config.image_pull_policy.as_kebab_case_str(),
+            ),
+        ]);
     }
-    if mz.meets_minimum_version(&V144) {
-        if let Some(affinity) = &config.clusterd_affinity {
-            let affinity = serde_json::to_string(affinity).unwrap();
+
+    // Standard kubernetes orchestrator needs additional args for service configuration
+    // CRD orchestrator gets this config from the CRD spec instead
+    if !config.use_crd_orchestrator {
+        for selector in &config.clusterd_node_selector {
             args.push(format!(
-                "--orchestrator-kubernetes-service-affinity={affinity}"
-            ))
+                "--orchestrator-kubernetes-service-node-selector={}={}",
+                selector.key, selector.value,
+            ));
         }
-        if let Some(tolerations) = &config.clusterd_tolerations {
-            let tolerations = serde_json::to_string(tolerations).unwrap();
+        if mz.meets_minimum_version(&V144) {
+            if let Some(affinity) = &config.clusterd_affinity {
+                let affinity = serde_json::to_string(affinity).unwrap();
+                args.push(format!(
+                    "--orchestrator-kubernetes-service-affinity={affinity}"
+                ))
+            }
+            if let Some(tolerations) = &config.clusterd_tolerations {
+                let tolerations = serde_json::to_string(tolerations).unwrap();
+                args.push(format!(
+                    "--orchestrator-kubernetes-service-tolerations={tolerations}"
+                ))
+            }
+        }
+        if let Some(scheduler_name) = &config.scheduler_name {
             args.push(format!(
-                "--orchestrator-kubernetes-service-tolerations={tolerations}"
-            ))
+                "--orchestrator-kubernetes-scheduler-name={}",
+                scheduler_name
+            ));
         }
-    }
-    if let Some(scheduler_name) = &config.scheduler_name {
-        args.push(format!(
-            "--orchestrator-kubernetes-scheduler-name={}",
-            scheduler_name
-        ));
-    }
-    if mz.meets_minimum_version(&V154_DEV0) {
-        args.extend(
-            mz.spec
-                .pod_annotations
-                .as_ref()
-                .map(|annotations| annotations.iter())
-                .unwrap_or_default()
-                .map(|(key, val)| {
-                    format!("--orchestrator-kubernetes-service-annotation={key}={val}")
-                }),
-        );
-    }
-    args.extend(
-        mz.default_labels()
-            .iter()
-            .chain(
+        if mz.meets_minimum_version(&V154_DEV0) {
+            args.extend(
                 mz.spec
-                    .pod_labels
+                    .pod_annotations
                     .as_ref()
-                    .map(|labels| labels.iter())
-                    .unwrap_or_default(),
-            )
-            .map(|(key, val)| format!("--orchestrator-kubernetes-service-label={key}={val}")),
-    );
-    if let Some(status) = &mz.status {
-        args.push(format!(
-            "--orchestrator-kubernetes-name-prefix=mz{}-",
-            status.resource_id
-        ));
+                    .map(|annotations| annotations.iter())
+                    .unwrap_or_default()
+                    .map(|(key, val)| {
+                        format!("--orchestrator-kubernetes-service-annotation={key}={val}")
+                    }),
+            );
+        }
+        args.extend(
+            mz.default_labels()
+                .iter()
+                .chain(
+                    mz.spec
+                        .pod_labels
+                        .as_ref()
+                        .map(|labels| labels.iter())
+                        .unwrap_or_default(),
+                )
+                .map(|(key, val)| format!("--orchestrator-kubernetes-service-label={key}={val}")),
+        );
+        if let Some(status) = &mz.status {
+            args.push(format!(
+                "--orchestrator-kubernetes-name-prefix=mz{}-",
+                status.resource_id
+            ));
+        }
     }
 
     // Add logging and tracing arguments.
@@ -858,14 +876,17 @@ fn create_environmentd_statefulset_object(
     } else {
         args.push("--tls-mode=disable".to_string());
     }
-    if let Some(ephemeral_volume_class) = &config.ephemeral_volume_class {
-        args.push(format!(
-            "--orchestrator-kubernetes-ephemeral-volume-class={}",
-            ephemeral_volume_class
-        ));
+    // Standard kubernetes orchestrator args for service configuration
+    if !config.use_crd_orchestrator {
+        if let Some(ephemeral_volume_class) = &config.ephemeral_volume_class {
+            args.push(format!(
+                "--orchestrator-kubernetes-ephemeral-volume-class={}",
+                ephemeral_volume_class
+            ));
+        }
+        // The `materialize` user used by clusterd always has gid 999.
+        args.push("--orchestrator-kubernetes-service-fs-group=999".to_string());
     }
-    // The `materialize` user used by clusterd always has gid 999.
-    args.push("--orchestrator-kubernetes-service-fs-group=999".to_string());
 
     // Add system_param configmap
     // This feature was enabled in 0.163 but did not have testing until after 0.164.
@@ -922,11 +943,14 @@ fn create_environmentd_statefulset_object(
         &config.internal_console_proxy_url,
     ));
 
-    if !config.collect_pod_metrics {
-        args.push("--orchestrator-kubernetes-disable-pod-metrics-collection".into());
-    }
-    if config.enable_prometheus_scrape_annotations {
-        args.push("--orchestrator-kubernetes-enable-prometheus-scrape-annotations".into());
+    // Standard kubernetes orchestrator args for pod metrics and prometheus
+    if !config.use_crd_orchestrator {
+        if !config.collect_pod_metrics {
+            args.push("--orchestrator-kubernetes-disable-pod-metrics-collection".into());
+        }
+        if config.enable_prometheus_scrape_annotations {
+            args.push("--orchestrator-kubernetes-enable-prometheus-scrape-annotations".into());
+        }
     }
 
     // the --disable-license-key-checks environmentd flag only existed

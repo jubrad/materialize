@@ -1130,6 +1130,71 @@ class StorageClass(Modification):
         retry(check_pods, 5)
 
 
+class UseCrdOrchestrator(Modification):
+    """Test the CRD-based orchestrator mode where environmentd creates
+    MaterializeClusterReplica CRDs instead of orchestratord managing
+    StatefulSets directly.
+    """
+
+    @classmethod
+    def values(cls, version: MzVersion) -> list[Any]:
+        # Only test CRD mode on versions that support it
+        # TODO: Update minimum version when this feature is released
+        return [False]  # Start with False only until feature is stable
+
+    @classmethod
+    def default(cls) -> Any:
+        return False
+
+    def modify(self, definition: dict[str, Any]) -> None:
+        definition["operator"]["environmentd"]["useCrdOrchestrator"] = self.value
+
+    def validate(self, mods: dict[type[Modification], Any]) -> None:
+        if not self.value:
+            # When disabled, the existing behavior is tested by other modifications
+            return
+
+        # When CRD orchestrator is enabled, verify that:
+        # 1. MaterializeClusterReplica CRDs exist for active clusters
+        # 2. orchestratord reconciles them into StatefulSets
+
+        def check_crd_orchestrator() -> None:
+            # Check that cluster replica CRDs exist
+            result = spawn.capture(
+                [
+                    "kubectl",
+                    "get",
+                    "materializeclusterreplicas",
+                    "-n",
+                    "materialize-environment",
+                    "-o",
+                    "name",
+                ],
+            )
+            # Should have at least one replica CRD (for system clusters)
+            assert result.strip(), f"Expected MaterializeClusterReplica CRDs, but found none"
+
+            # Verify that StatefulSets are still created by orchestratord
+            # (from reconciling the CRDs)
+            sts_result = spawn.capture(
+                [
+                    "kubectl",
+                    "get",
+                    "statefulsets",
+                    "-n",
+                    "materialize-environment",
+                    "-l",
+                    "cluster.environmentd.materialize.cloud/type=cluster",
+                    "-o",
+                    "name",
+                ],
+            )
+            assert sts_result.strip(), f"Expected StatefulSets from CRD reconciliation, but found none"
+
+        # Give time for CRDs to be created and reconciled
+        retry(check_crd_orchestrator, 120)
+
+
 class ClusterdCpu(Modification):
     # The default cluster (s2) uses the "25cc" size.
     DEFAULT_SIZE_NAME = "25cc"

@@ -224,6 +224,10 @@ spec:
         - "--enable-prometheus-scrape-annotations"
         {{- end }}
         {{- end }}
+        {{/* CRD Orchestrator */}}
+        {{- if .Values.environmentd.useCrdOrchestrator }}
+        - "--use-crd-orchestrator"
+        {{- end }}
         {{/* Telemetry */}}
         {{- if .Values.telemetry.enabled }}
         - "--segment-api-key={{ .Values.telemetry.segmentApiKey }}"

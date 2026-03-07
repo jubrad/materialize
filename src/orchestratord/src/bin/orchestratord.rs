@@ -77,6 +77,11 @@ pub struct Args {
     enable_prometheus_scrape_annotations: bool,
     #[clap(long)]
     disable_authentication: bool,
+    /// When enabled, environmentd will use the CRD-based orchestrator which creates
+    /// MaterializeClusterReplica CRDs instead of managing StatefulSets directly.
+    /// orchestratord will then reconcile these CRDs into StatefulSets.
+    #[clap(long)]
+    use_crd_orchestrator: bool,
 
     #[clap(long)]
     segment_api_key: Option<String>,
@@ -317,6 +322,7 @@ async fn run(args: Args) -> Result<(), anyhow::Error> {
                     secrets_controller: args.secrets_controller,
                     collect_pod_metrics: args.collect_pod_metrics,
                     enable_prometheus_scrape_annotations: args.enable_prometheus_scrape_annotations,
+                    use_crd_orchestrator: args.use_crd_orchestrator,
                     segment_api_key: args.segment_api_key,
                     segment_client_side: args.segment_client_side,
                     console_image_tag_default: args.console_image_tag_default,

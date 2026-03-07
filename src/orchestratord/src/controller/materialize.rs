@@ -60,6 +60,7 @@ pub struct Config {
     pub secrets_controller: String,
     pub collect_pod_metrics: bool,
     pub enable_prometheus_scrape_annotations: bool,
+    pub use_crd_orchestrator: bool,
 
     pub segment_api_key: Option<String>,
     pub segment_client_side: bool,
