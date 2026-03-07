@@ -215,6 +215,10 @@ operator:
   secretsController: kubernetes
 
 environmentd:
+  # -- Whether to use the CRD-based orchestrator for cluster management.
+  # When true, environmentd creates MaterializeClusterReplica CRDs instead of
+  # managing StatefulSets directly, reducing its RBAC requirements.
+  useCrdOrchestrator: false
   # -- Node selector to use for environmentd pods spawned by the operator
   # @notationType -- k8s/nodeSelector
   # @default -- ``{}``

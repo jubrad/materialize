@@ -93,6 +93,11 @@ rules:
   - consoles
   - consoles/status
   - vpcendpoints
+  # Cluster replica CRDs managed by orchestratord
+  - materializeclusters
+  - materializeclusters/status
+  - materializeclusterreplicas
+  - materializeclusterreplicas/status
   verbs:
   - create
   - update
