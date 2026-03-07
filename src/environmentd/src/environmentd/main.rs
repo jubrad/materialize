@@ -47,6 +47,9 @@ use mz_orchestrator::Orchestrator;
 use mz_orchestrator_kubernetes::{
     KubernetesImagePullPolicy, KubernetesOrchestrator, KubernetesOrchestratorConfig,
 };
+use mz_orchestrator_kubernetes_crd::{
+    KubernetesCrdOrchestrator, KubernetesCrdOrchestratorConfig,
+};
 use mz_orchestrator_process::{
     ProcessOrchestrator, ProcessOrchestratorConfig, ProcessOrchestratorTcpProxyConfig,
 };
@@ -246,6 +249,17 @@ pub struct Args {
         env = "ORCHESTRATOR_KUBERNETES_ENABLE_PROMETHEUS_SCRAPE_ANNOTATIONS"
     )]
     orchestrator_kubernetes_enable_prometheus_scrape_annotations: bool,
+
+    // === Kubernetes CRD orchestrator options ===
+    /// The name of the MaterializeCluster CRD to use as parent for replicas.
+    /// Required when using the kubernetes-crd orchestrator.
+    #[clap(
+        long,
+        env = "ORCHESTRATOR_KUBERNETES_CRD_CLUSTER_REF",
+        required_if_eq("orchestrator", "kubernetes-crd")
+    )]
+    orchestrator_kubernetes_crd_cluster_ref: Option<String>,
+
     #[clap(long, env = "ORCHESTRATOR_PROCESS_WRAPPER")]
     orchestrator_process_wrapper: Option<String>,
     /// Where the process orchestrator should store secrets.
@@ -625,6 +639,9 @@ pub struct Args {
 #[derive(ValueEnum, Debug, Clone)]
 enum OrchestratorKind {
     Kubernetes,
+    /// Kubernetes orchestrator using CRDs managed by orchestratord.
+    /// This reduces RBAC requirements for environmentd.
+    KubernetesCrd,
     Process,
 }
 
@@ -863,6 +880,79 @@ fn run(mut args: Args) -> Result<(), anyhow::Error> {
                 secrets_controller,
                 Some(cloud_resource_controller),
             )
+        }
+        OrchestratorKind::KubernetesCrd => {
+            // The CRD orchestrator delegates Kubernetes resource management to orchestratord.
+            // It only creates/updates MaterializeClusterReplica CRDs.
+            let cluster_ref = args
+                .orchestrator_kubernetes_crd_cluster_ref
+                .clone()
+                .expect("clap enforced");
+
+            // Use the deployment generation from build info or default to 1
+            let generation = 1u64; // TODO: Get from environment or config
+
+            let (client, _namespace) = runtime
+                .block_on(mz_orchestrator_kubernetes::util::create_client(
+                    args.orchestrator_kubernetes_context.clone(),
+                ))
+                .context("creating kubernetes client for CRD orchestrator")?;
+
+            let orchestrator: Arc<dyn Orchestrator> = Arc::new(KubernetesCrdOrchestrator::new(
+                client.clone(),
+                KubernetesCrdOrchestratorConfig {
+                    cluster_ref,
+                    generation,
+                },
+            ));
+
+            // For secrets, we still need to use the existing Kubernetes or AWS controller
+            let secrets_controller: Arc<dyn SecretsController> = match args.secrets_controller {
+                SecretsControllerKind::Kubernetes => {
+                    // Create a regular KubernetesOrchestrator just for secrets
+                    let k8s_orchestrator = Arc::new(
+                        runtime
+                            .block_on(KubernetesOrchestrator::new(KubernetesOrchestratorConfig {
+                                context: args.orchestrator_kubernetes_context.clone(),
+                                scheduler_name: None,
+                                service_annotations: Default::default(),
+                                service_labels: Default::default(),
+                                service_node_selector: Default::default(),
+                                service_affinity: None,
+                                service_tolerations: None,
+                                service_account: None,
+                                image_pull_policy: args.orchestrator_kubernetes_image_pull_policy,
+                                aws_external_id_prefix: args.aws_external_id_prefix.clone(),
+                                coverage: false,
+                                ephemeral_volume_storage_class: None,
+                                service_fs_group: None,
+                                name_prefix: args.orchestrator_kubernetes_name_prefix.clone(),
+                                collect_pod_metrics: false,
+                                enable_prometheus_scrape_annotations: false,
+                            }))
+                            .context("creating kubernetes orchestrator for secrets")?,
+                    );
+                    let sc: Arc<dyn SecretsController> = k8s_orchestrator;
+                    sc
+                }
+                SecretsControllerKind::AwsSecretsManager => Arc::new(
+                    runtime.block_on(AwsSecretsController::new(
+                        &aws_secrets_controller_prefix(&args.environment_id),
+                        &aws_secrets_controller_key_alias(&args.environment_id),
+                        args.aws_secrets_controller_tags
+                            .clone()
+                            .into_iter()
+                            .map(|tag| (tag.key, tag.value))
+                            .collect(),
+                    )),
+                ),
+                SecretsControllerKind::LocalFile => bail!(
+                    "SecretsControllerKind::LocalFile is not compatible with Orchestrator::KubernetesCrd."
+                ),
+            };
+
+            // No cloud resource controller for CRD orchestrator (handled by orchestratord)
+            (orchestrator, secrets_controller, None)
         }
         OrchestratorKind::Process => {
             if args

@@ -6467,6 +6467,7 @@ dependencies = [
  "mz-oidc-mock",
  "mz-orchestrator",
  "mz-orchestrator-kubernetes",
+ "mz-orchestrator-kubernetes-crd",
  "mz-orchestrator-process",
  "mz-orchestrator-tracing",
  "mz-orchestratord",

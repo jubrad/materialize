@@ -61,6 +61,7 @@ mz-license-keys = { path = "../license-keys" }
 mz-metrics = { path = "../metrics" }
 mz-orchestrator = { path = "../orchestrator" }
 mz-orchestrator-kubernetes = { path = "../orchestrator-kubernetes" }
+mz-orchestrator-kubernetes-crd = { path = "../orchestrator-kubernetes-crd" }
 mz-orchestrator-process = { path = "../orchestrator-process" }
 mz-orchestrator-tracing = { path = "../orchestrator-tracing" }
 mz-orchestratord = { path = "../orchestratord", default-features = false }
