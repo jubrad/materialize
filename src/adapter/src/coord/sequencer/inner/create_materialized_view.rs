@@ -358,6 +358,16 @@ impl Coordinator {
             });
         }
 
+        // Block materialized views on non-cc clusters (skip for EXPLAIN).
+        if matches!(explain_ctx, ExplainContext::None) {
+            if let Some(cluster_name) = self.check_cluster_non_cc(*cluster_id) {
+                return Err(AdapterError::ClusterNonCcSizeRestriction {
+                    object_type: "materialized view".into(),
+                    cluster_name,
+                });
+            }
+        }
+
         let validity =
             PlanValidity::require_transient_revision(self.catalog().transient_revision());
 

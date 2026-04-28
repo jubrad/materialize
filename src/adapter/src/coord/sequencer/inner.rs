@@ -20,11 +20,15 @@ use futures::{Future, StreamExt, future};
 use itertools::Itertools;
 use mz_adapter_types::compaction::CompactionWindow;
 use mz_adapter_types::connection::ConnectionId;
-use mz_adapter_types::dyncfgs::{ENABLE_MULTI_REPLICA_SOURCES, ENABLE_PASSWORD_AUTH};
+use mz_adapter_types::dyncfgs::{
+    ENABLE_CC_CLUSTER_CHECK, ENABLE_MULTI_REPLICA_SOURCES, ENABLE_PASSWORD_AUTH,
+};
 use mz_catalog::memory::error::ErrorKind;
 use mz_catalog::memory::objects::{
-    CatalogItem, Connection, DataSourceDesc, Sink, Source, Table, TableDataSource, Type,
+    CatalogItem, ClusterVariant, Connection, DataSourceDesc, Sink, Source, Table, TableDataSource,
+    Type,
 };
+use mz_controller::clusters::ReplicaLocation;
 use mz_expr::{
     CollectionPlan, MapFilterProject, OptimizedMirRelationExpr, ResultSpec, RowSetFinishing,
 };
@@ -1049,6 +1053,55 @@ impl Coordinator {
         }
     }
 
+    /// Returns the cluster name if the cluster has any non-cc replicas or a non-cc managed size.
+    /// Returns `None` if the cluster is fully cc-compatible or if the check is disabled.
+    pub(crate) fn check_cluster_non_cc(
+        &self,
+        cluster_id: mz_controller_types::ClusterId,
+    ) -> Option<String> {
+        if !ENABLE_CC_CLUSTER_CHECK.get(self.catalog().system_config().dyncfgs()) {
+            return None;
+        }
+        let catalog = self.catalog();
+        let cluster = catalog.get_cluster(cluster_id);
+        // For managed clusters, check the declared size.
+        if let ClusterVariant::Managed(managed) = &cluster.config.variant {
+            if !catalog.is_cluster_size_cc(&managed.size) {
+                return Some(cluster.name.clone());
+            }
+        }
+        // Check all existing replicas.
+        for replica in cluster.replicas() {
+            match &replica.config.location {
+                ReplicaLocation::Managed(m) => {
+                    if !m.allocation.is_cc {
+                        return Some(cluster.name.clone());
+                    }
+                }
+                ReplicaLocation::Unmanaged(_) => {
+                    return Some(cluster.name.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns true if the cluster has any materialized views, indexes, or sinks bound to it.
+    pub(crate) fn cluster_has_compute_objects(
+        &self,
+        cluster_id: mz_controller_types::ClusterId,
+    ) -> bool {
+        let catalog = self.catalog();
+        let cluster = catalog.get_cluster(cluster_id);
+        cluster.bound_objects.iter().any(|id| {
+            let entry = catalog.get_entry(id);
+            matches!(
+                entry.item(),
+                CatalogItem::MaterializedView(_) | CatalogItem::Index(_) | CatalogItem::Sink(_)
+            )
+        })
+    }
+
     #[instrument]
     pub(super) async fn sequence_create_sink(
         &mut self,
@@ -1063,6 +1116,15 @@ impl Coordinator {
             if_not_exists,
             in_cluster,
         } = plan;
+
+        // Block sinks on non-cc clusters.
+        if let Some(cluster_name) = self.check_cluster_non_cc(in_cluster) {
+            ctx.retire(Err(AdapterError::ClusterNonCcSizeRestriction {
+                object_type: "sink".into(),
+                cluster_name,
+            }));
+            return;
+        }
 
         // First try to allocate an ID and an OID. If either fails, we're done.
         let (item_id, global_id) = return_if_err!(self.allocate_user_id().await, ctx);

@@ -1,0 +1,90 @@
+# Copyright Materialize, Inc. and contributors. All rights reserved.
+#
+# Use of this software is governed by the Business Source License
+# included in the LICENSE file at the root of this repository.
+#
+# As of the Change Date specified in that file, in accordance with
+# the Business Source License, use of this software will be governed
+# by the Apache License, Version 2.0.
+
+# Tests that materialized views, indexes, and sinks cannot be created on
+# clusters using non-cc replica sizes, and that non-cc replicas cannot be
+# added to clusters containing those objects.
+
+mode cockroach
+
+reset-server
+
+# Enable the cc cluster check.
+simple conn=mz_system,user=mz_system
+ALTER SYSTEM SET enable_cc_cluster_check = true;
+----
+COMPLETE 0
+
+# Create a table for testing.
+statement ok
+CREATE TABLE t (a int, b int)
+
+statement ok
+INSERT INTO t VALUES (1, 2), (3, 4)
+
+# Create a non-cc cluster (default test sizes are non-cc).
+statement ok
+CREATE CLUSTER non_cc_cluster SIZE 'scale=1,workers=1'
+
+# Create a cc cluster.
+statement ok
+CREATE CLUSTER cc_cluster SIZE '1cc'
+
+# --- Direction 1: Block MV/Index/Sink on non-cc clusters ---
+
+# Materialized view on non-cc cluster should fail.
+statement error cannot create materialized view on cluster 'non_cc_cluster' which uses a non-cc cluster size
+CREATE MATERIALIZED VIEW non_cc_mv IN CLUSTER non_cc_cluster AS SELECT a, b FROM t
+
+# Index on non-cc cluster should fail.
+statement error cannot create index on cluster 'non_cc_cluster' which uses a non-cc cluster size
+CREATE INDEX non_cc_idx IN CLUSTER non_cc_cluster ON t (a)
+
+# Materialized view on cc cluster should succeed.
+statement ok
+CREATE MATERIALIZED VIEW cc_mv IN CLUSTER cc_cluster AS SELECT a, b FROM t
+
+# Index on cc cluster should succeed.
+statement ok
+CREATE INDEX cc_idx IN CLUSTER cc_cluster ON t (a)
+
+# --- Direction 2: Block ALTER to non-cc size when cluster has compute objects ---
+
+# Changing the cc cluster (which has MVs/indexes) to a non-cc size should fail.
+statement error cannot change cluster 'cc_cluster' to a non-cc size as it contains materialized views, indexes, or sinks
+ALTER CLUSTER cc_cluster SET (SIZE 'scale=1,workers=1')
+
+# Changing a non-cc cluster (no compute objects) to another non-cc size should succeed.
+statement ok
+ALTER CLUSTER non_cc_cluster SET (SIZE 'scale=1,workers=2')
+
+# --- Verify objects were created correctly ---
+
+query IT rowsort
+SELECT a, b FROM cc_mv
+----
+1  2
+3  4
+
+# --- Cleanup ---
+
+statement ok
+DROP INDEX cc_idx
+
+statement ok
+DROP MATERIALIZED VIEW cc_mv
+
+statement ok
+DROP CLUSTER cc_cluster CASCADE
+
+statement ok
+DROP CLUSTER non_cc_cluster CASCADE
+
+statement ok
+DROP TABLE t CASCADE

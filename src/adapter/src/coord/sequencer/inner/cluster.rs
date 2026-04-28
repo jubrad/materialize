@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use itertools::Itertools;
 use maplit::btreeset;
+use mz_adapter_types::dyncfgs::ENABLE_CC_CLUSTER_CHECK;
 use mz_catalog::builtin::BUILTINS;
 use mz_catalog::memory::objects::{
     ClusterConfig, ClusterReplica, ClusterVariant, ClusterVariantManaged,
@@ -981,6 +982,21 @@ impl Coordinator {
             }
         }
 
+        // Block adding non-cc replicas to clusters that have compute objects.
+        let cc_check_enabled =
+            ENABLE_CC_CLUSTER_CHECK.get(self.catalog().system_config().dyncfgs());
+        let replica_is_cc = match &config.location {
+            ReplicaLocation::Managed(m) => m.allocation.is_cc,
+            ReplicaLocation::Unmanaged(_) => false,
+        };
+        if cc_check_enabled && !replica_is_cc && self.cluster_has_compute_objects(cluster_id) {
+            coord_bail!(
+                "cannot add a non-cc replica to cluster '{}' as it contains \
+                 materialized views, indexes, or sinks",
+                cluster.name
+            );
+        }
+
         // Replicas have the same owner as their cluster.
         let owner_id = cluster.owner_id();
         let op = catalog::Op::CreateClusterReplica {
@@ -1047,6 +1063,18 @@ impl Coordinator {
             &self.catalog().get_role_allowed_cluster_sizes(&role_id),
             new_size,
         )?;
+
+        // Block changing to a non-cc size if the cluster has compute objects.
+        let cc_check_enabled =
+            ENABLE_CC_CLUSTER_CHECK.get(self.catalog().system_config().dyncfgs());
+        let new_size_is_cc = self.catalog.is_cluster_size_cc(new_size);
+        if cc_check_enabled && !new_size_is_cc && self.cluster_has_compute_objects(cluster_id) {
+            coord_bail!(
+                "cannot change cluster '{}' to a non-cc size as it contains \
+                 materialized views, indexes, or sinks",
+                name
+            );
+        }
 
         // check for active updates
         if cluster.replicas().any(|r| r.config.location.pending()) {

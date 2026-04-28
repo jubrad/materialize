@@ -1123,6 +1123,15 @@ impl Catalog {
         &self.state.cluster_replica_sizes
     }
 
+    /// Returns whether the given cluster replica size name is a modern "cc" size.
+    pub fn is_cluster_size_cc(&self, size: &str) -> bool {
+        self.state
+            .cluster_replica_sizes
+            .0
+            .get(size)
+            .map_or(false, |a| a.is_cc)
+    }
+
     /// Returns the privileges of an object by its ID.
     pub fn get_privileges(
         &self,

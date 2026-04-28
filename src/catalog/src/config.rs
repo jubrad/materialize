@@ -279,6 +279,25 @@ impl ClusterReplicaSizeMap {
         );
 
         inner.insert(
+            "1cc".to_string(),
+            ReplicaAllocation {
+                memory_limit: None,
+                memory_request: None,
+                cpu_limit: None,
+                cpu_request: None,
+                disk_limit: None,
+                scale: NonZero::new(1).expect("not zero"),
+                workers: NonZero::new(1).expect("not zero"),
+                credits_per_hour: 1.into(),
+                cpu_exclusive: false,
+                is_cc: true,
+                swap_enabled: false,
+                disabled: false,
+                selectors: BTreeMap::default(),
+            },
+        );
+
+        inner.insert(
             "free".to_string(),
             ReplicaAllocation {
                 memory_limit: None,

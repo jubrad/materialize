@@ -117,6 +117,14 @@ pub const ENABLE_MULTI_REPLICA_SOURCES: Config<bool> = Config::new(
     "Enable multi-replica sources.",
 );
 
+/// Whether to enforce that materialized views, indexes, and sinks can only be
+/// created on clusters using modern cc sizes.
+pub const ENABLE_CC_CLUSTER_CHECK: Config<bool> = Config::new(
+    "enable_cc_cluster_check",
+    false,
+    "When enabled, prevents creating materialized views, indexes, or sinks on clusters that use non-cc replica sizes.",
+);
+
 /// Whether to enable password authentication.
 pub const ENABLE_PASSWORD_AUTH: Config<bool> = Config::new(
     "enable_password_auth",
@@ -232,6 +240,7 @@ pub fn all_dyncfgs(configs: ConfigSet) -> ConfigSet {
         .add(&ENABLE_CONTINUAL_TASK_BUILTINS)
         .add(&ENABLE_EXPRESSION_CACHE)
         .add(&ENABLE_MULTI_REPLICA_SOURCES)
+        .add(&ENABLE_CC_CLUSTER_CHECK)
         .add(&ENABLE_PASSWORD_AUTH)
         .add(&OIDC_ISSUER)
         .add(&OIDC_AUDIENCE)

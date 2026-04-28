@@ -81,6 +81,12 @@ pub enum AdapterError {
         object_type: String,
         log_names: Vec<String>,
     },
+    /// Attempted to create a compute object on a cluster that uses non-cc replica sizes,
+    /// or to add a non-cc replica to a cluster that has compute objects.
+    ClusterNonCcSizeRestriction {
+        object_type: String,
+        cluster_name: String,
+    },
     /// No such cluster replica size has been configured.
     InvalidClusterReplicaAz {
         az: String,
@@ -601,6 +607,7 @@ impl AdapterError {
             AdapterError::Internal(_) => SqlState::INTERNAL_ERROR,
             AdapterError::IntrospectionDisabled { .. } => SqlState::FEATURE_NOT_SUPPORTED,
             AdapterError::InvalidLogDependency { .. } => SqlState::FEATURE_NOT_SUPPORTED,
+            AdapterError::ClusterNonCcSizeRestriction { .. } => SqlState::FEATURE_NOT_SUPPORTED,
             AdapterError::InvalidClusterReplicaAz { .. } => SqlState::FEATURE_NOT_SUPPORTED,
             AdapterError::InvalidSetIsolationLevel => SqlState::ACTIVE_SQL_TRANSACTION,
             AdapterError::InvalidSetCluster => SqlState::ACTIVE_SQL_TRANSACTION,
@@ -889,6 +896,15 @@ impl fmt::Display for AdapterError {
             ),
             AdapterError::InvalidLogDependency { object_type, .. } => {
                 write!(f, "{object_type} objects cannot depend on log sources")
+            }
+            AdapterError::ClusterNonCcSizeRestriction {
+                object_type,
+                cluster_name,
+            } => {
+                write!(
+                    f,
+                    "cannot create {object_type} on cluster '{cluster_name}' which uses a non-cc cluster size"
+                )
             }
             AdapterError::InvalidClusterReplicaAz { az, expected: _ } => {
                 write!(f, "unknown cluster replica availability zone {az}",)
