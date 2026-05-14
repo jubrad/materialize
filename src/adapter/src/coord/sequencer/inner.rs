@@ -363,7 +363,7 @@ impl Coordinator {
         let catalog = self.catalog().for_session(session);
         let mut resolved_ids = mz_sql::names::visit_dependencies(&catalog, &subsource_stmt);
 
-        let plan = self.plan_statement(
+        let (plan, _sql_impl_ids) = self.plan_statement(
             session,
             Statement::CreateSubsource(subsource_stmt),
             params,
@@ -524,8 +524,8 @@ impl Coordinator {
             &params,
             &mut resolved_ids,
         )? {
-            Plan::CreateSource(plan) => plan,
-            p => unreachable!("s must be CreateSourcePlan but got {:?}", p),
+            (Plan::CreateSource(plan), _sql_impl_ids) => plan,
+            (p, _) => unreachable!("s must be CreateSourcePlan but got {:?}", p),
         };
 
         let (item_id, global_id) = self.allocate_user_id().await?;
@@ -3514,8 +3514,10 @@ impl Coordinator {
             )
             .map_err(|e| AdapterError::InvalidAlter("CONNECTION", e))?
             {
-                Plan::CreateConnection(plan) => plan,
-                _ => unreachable!("create source plan is only valid response"),
+                (Plan::CreateConnection(plan), _sql_impl_ids) => plan,
+                (p, _) => {
+                    unreachable!("create connection plan is only valid response, got {:?}", p)
+                }
             };
 
             // Parse statement.
@@ -3913,8 +3915,10 @@ impl Coordinator {
                 )
                 .map_err(|e| AdapterError::internal(ALTER_SOURCE, e))?;
                 let plan = match planned {
-                    Plan::CreateSource(plan) => plan,
-                    _ => unreachable!("create source plan is only valid response"),
+                    (Plan::CreateSource(plan), _sql_impl_ids) => plan,
+                    (p, _) => {
+                        unreachable!("create source plan is only valid response, got {:?}", p)
+                    }
                 };
 
                 // Asserting that we've done the right thing with dependencies
@@ -4555,8 +4559,13 @@ impl Coordinator {
             crate::coord::PlanStatement::Statement { stmt, params } => {
                 self.handle_execute_inner(stmt, params, ctx).await;
             }
-            crate::coord::PlanStatement::Plan { plan, resolved_ids } => {
-                self.sequence_plan(ctx, plan, resolved_ids).await;
+            crate::coord::PlanStatement::Plan {
+                plan,
+                resolved_ids,
+                sql_impl_resolved_ids,
+            } => {
+                self.sequence_plan(ctx, plan, resolved_ids, sql_impl_resolved_ids)
+                    .await;
             }
         }
     }

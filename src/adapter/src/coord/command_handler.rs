@@ -322,7 +322,8 @@ impl Coordinator {
                     };
 
                     let conn_id = ctx.session().conn_id().clone();
-                    self.sequence_plan(ctx, plan, ResolvedIds::empty()).await;
+                    self.sequence_plan(ctx, plan, ResolvedIds::empty(), ResolvedIds::empty())
+                        .await;
                     // Part of the Command::Commit contract is that the Coordinator guarantees that
                     // it has cleared its transaction state for the connection.
                     self.clear_connection(&conn_id).await;
@@ -774,10 +775,7 @@ impl Coordinator {
         notice_tx: mpsc::UnboundedSender<AdapterNotice>,
     ) {
         // Early return if successful, otherwise cleanup any possible state.
-        match self
-            .handle_startup_inner(&user, &conn_id, &client_ip, &notice_tx)
-            .await
-        {
+        match self.handle_startup_inner(&user, &conn_id, &client_ip).await {
             Ok((role_id, superuser_attribute, session_defaults)) => {
                 let session_type = metrics::session_type_label_value(&user);
                 self.metrics
@@ -880,7 +878,6 @@ impl Coordinator {
         user: &User,
         _conn_id: &ConnectionId,
         client_ip: &Option<IpAddr>,
-        notice_tx: &mpsc::UnboundedSender<AdapterNotice>,
     ) -> Result<(RoleId, SuperuserAttribute, BTreeMap<String, OwnedVarInput>), AdapterError> {
         if self.catalog().try_get_role_by_name(&user.name).is_none() {
             // If the user has made it to this point, that means they have been fully authenticated.
@@ -917,12 +914,8 @@ impl Coordinator {
             .try_get_role_by_name(&user.name)
             .expect("created above");
         let role_id = role.id;
-        let superuser_attribute = role.attributes.superuser;
 
-        // JWT group-to-role sync: reconcile role memberships with JWT group claims.
-        // Missing groups claim (None) → skip sync; empty (Some([])) → revoke all.
-        self.maybe_sync_jwt_groups(role_id, user.groups.as_deref(), notice_tx)
-            .await?;
+        let superuser_attribute = role.attributes.superuser;
 
         if role_id.is_user() && !ALLOW_USER_SESSIONS.get(self.catalog().system_config().dyncfgs()) {
             return Err(AdapterError::UserSessionsDisallowed);
@@ -1416,7 +1409,7 @@ impl Coordinator {
         //   - In the handler for `Message::PurifiedStatementReady`, before we handle the purified statement.
         // If we add special handling for more types of `Statement`s, we'll need to ensure similar verification
         // occurs.
-        let (stmt, mut resolved_ids) = match stmt {
+        let (stmt, resolved_ids) = match stmt {
             // Various statements must be purified off the main coordinator thread of control.
             stmt if Self::must_spawn_purification(&stmt) => {
                 let internal_cmd_tx = self.internal_cmd_tx.clone();
@@ -1576,8 +1569,11 @@ impl Coordinator {
             _ => (stmt, resolved_ids),
         };
 
-        match self.plan_statement(ctx.session(), stmt, &params, &mut resolved_ids) {
-            Ok(plan) => self.sequence_plan(ctx, plan, resolved_ids).await,
+        match self.plan_statement(ctx.session(), stmt, &params, &resolved_ids) {
+            Ok((plan, sql_impl_ids)) => {
+                self.sequence_plan(ctx, plan, resolved_ids, sql_impl_ids)
+                    .await
+            }
             Err(e) => ctx.retire(Err(e)),
         }
     }
