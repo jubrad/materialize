@@ -1,0 +1,41 @@
+Explained Query:
+  Finish order_by=[#0 asc nulls_last, #2 desc nulls_first] output=[#0..=#7]
+    →Differential Join %0[#1{object_id}] » %1:objects[#0{id}] » %2:clusters[#0{id}] » %3:object_names[#0{id}]
+      →Arrange (#1{object_id})
+        →Consolidating Monotonic Top1
+          Group By #2, #1
+          Order By #0 desc nulls_first
+          →Differential Join %1[#0] » %0:wallclock_lag[#2{object_id}]
+            after %0:
+              Project: #2, #0, #3
+              Filter: (1782585834563 <= timestamp_tz_to_mz_timestamp((#1{occurred_at} + 01:00:00)))
+              Map: timestamptz_bin(00:01:00, #1{occurred_at}, 1970-01-01 00:00:00 UTC)
+            →Arranged materialize.bench.wallclock_lag
+            →Distinct GroupAggregate
+              →Fused with Child Map/Filter/Project
+                Project: #0
+                Filter: (#1{cluster_id} = "c0")
+                  →Read materialize.bench.objects
+      →Arrange (#0{id})
+        →Fused with Child Map/Filter/Project
+          Filter: (#1{cluster_id}) IS NOT NULL
+            →Read materialize.bench.objects
+      →Arrange (#0{id})
+        →Read materialize.bench.clusters
+      →Arrange (#0{id})
+        →Read materialize.bench.object_names
+
+Source materialize.bench.clusters
+  filter=((#0{id}) IS NOT NULL)
+  pushdown=((#0{id}) IS NOT NULL)
+Source materialize.bench.objects
+  filter=((#0{id}) IS NOT NULL)
+  pushdown=((#0{id}) IS NOT NULL)
+Source materialize.bench.object_names
+  filter=((#0{id}) IS NOT NULL)
+  pushdown=((#0{id}) IS NOT NULL)
+
+Used Indexes:
+  - materialize.bench.wallclock_lag_idx (differential join)
+
+Target cluster: bench

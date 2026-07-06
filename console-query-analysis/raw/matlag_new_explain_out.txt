@@ -1,0 +1,116 @@
+NOTICE:  connected to Materialize v26.32.0-dev.0
+  Environment ID: local-az1-a33ecff1-0f09-4930-b172-f77fe3fad64b-0
+  Region: local/az1
+  User: materialize
+  Cluster: quickstart
+  Database: materialize
+  Schema: public
+  Session UUID: 019f146c-4e3a-75f6-85aa-d9331084ff36
+
+Issue a SQL query to get started. Need help?
+  View documentation: https://materialize.com/s/docs
+  Join our Slack community: https://materialize.com/s/chat
+    
+SET
+SET
+                                                                             Physical Plan                                                                             
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Explained Query:                                                                                                                                                     +
+   →With                                                                                                                                                              +
+     cte l0 =                                                                                                                                                         +
+       →Map/Filter/Project                                                                                                                                            +
+         Project: #0, #1                                                                                                                                              +
+           →Consolidating Monotonic Top1                                                                                                                              +
+             Group By #0                                                                                                                                              +
+             Order By #2 desc nulls_first                                                                                                                             +
+             →Differential Join %1[#0] » %0:mz_wallclock_global_lag_recent_history[#0{object_id}]                                                                     +
+               after %0:                                                                                                                                              +
+                 Filter: (timestamp_tz_to_mz_timestamp((#2{occurred_at} + 00:05:00)) >= 1782754069337)                                                                +
+               →Arranged mz_internal.mz_wallclock_global_lag_recent_history                                                                                           +
+               →Arrange (#0)                                                                                                                                          +
+                 →Constant (1 row)                                                                                                                                    +
+     cte l1 =                                                                                                                                                         +
+       →Fused with Child Map/Filter/Project                                                                                                                           +
+         Project: #1, #4                                                                                                                                              +
+         Filter: (#1{id} = "u1")                                                                                                                                      +
+           →Arranged mz_catalog.mz_objects                                                                                                                            +
+             Key: (#2{schema_id})                                                                                                                                     +
+     cte l2 =                                                                                                                                                         +
+       →Map/Filter/Project                                                                                                                                            +
+         Project: #0                                                                                                                                                  +
+         Map: "u1"                                                                                                                                                    +
+           →Distinct GroupAggregate                                                                                                                                   +
+             →Fused with Child Map/Filter/Project                                                                                                                     +
+               Project: ()                                                                                                                                            +
+                 →Read l1                                                                                                                                             +
+   →Return                                                                                                                                                            +
+     →Delta Cross Join [%0:l1[×] » %1[×] » %2[×]] [%1[×] » %0:l1[×] » %2[×]] [%2[×] » %0:l1[×] » %1[×]]                                                               +
+       path %0:                                                                                                                                                       +
+         after %1:                                                                                                                                                    +
+           Project: #0, #1, #4                                                                                                                                        +
+           Map: case when (#3) IS NULL then null else #2 end                                                                                                          +
+         after %2:                                                                                                                                                    +
+           Project: #0..=#2, #5, #6                                                                                                                                   +
+           Map: case when (#4) IS NULL then null else #3 end, (#5{lag} >= 00:00:10)                                                                                   +
+       path %1:                                                                                                                                                       +
+         after %2:                                                                                                                                                    +
+           Project: #0..=#2, #5, #6                                                                                                                                   +
+           Map: case when (#4) IS NULL then null else #3 end, (#5{lag} >= 00:00:10)                                                                                   +
+       path %2:                                                                                                                                                       +
+         after %1:                                                                                                                                                    +
+           Project: #0, #1, #6, #2, #3                                                                                                                                +
+           Map: case when (#5) IS NULL then null else #4 end                                                                                                          +
+       →Arrange (empty key)                                                                                                                                           +
+         →Stream l1                                                                                                                                                   +
+       →Arrange (empty key)                                                                                                                                           +
+         →Union                                                                                                                                                       +
+           →Fused with Child Map/Filter/Project                                                                                                                       +
+             Project: #2, #3                                                                                                                                          +
+             Filter: (#0{object_id} = "u1")                                                                                                                           +
+             Map: true                                                                                                                                                +
+               →Arranged mz_internal.mz_hydration_statuses                                                                                                            +
+                 Key: (#0{object_id}, #1{replica_id})                                                                                                                 +
+           →Map/Filter/Project                                                                                                                                        +
+             Project: #1, #2                                                                                                                                          +
+             Map: null, null                                                                                                                                          +
+               →Threshold Diffs #0                                                                                                                                    +
+                 →Arrange (#0)                                                                                                                                        +
+                   →Consolidating Union                                                                                                                               +
+                     →Negate Diffs                                                                                                                                    +
+                       →Fused with Child Map/Filter/Project                                                                                                           +
+                         Project: #0                                                                                                                                  +
+                         Filter: (#0{object_id} = "u1")                                                                                                               +
+                           →Arranged mz_internal.mz_hydration_statuses                                                                                                +
+                             Key: (#0{object_id}, #1{replica_id})                                                                                                     +
+                     →Stream l2                                                                                                                                       +
+       →Arrange (empty key)                                                                                                                                           +
+         →Union                                                                                                                                                       +
+           →Fused with Child Map/Filter/Project                                                                                                                       +
+             Project: #1, #2                                                                                                                                          +
+             Map: true                                                                                                                                                +
+               →Read l0                                                                                                                                               +
+           →Map/Filter/Project                                                                                                                                        +
+             Project: #1, #2                                                                                                                                          +
+             Map: null, null                                                                                                                                          +
+               →Threshold Diffs #0                                                                                                                                    +
+                 →Arrange (#0)                                                                                                                                        +
+                   →Consolidating Union                                                                                                                               +
+                     →Negate Diffs                                                                                                                                    +
+                       →Fused with Child Map/Filter/Project                                                                                                           +
+                         Project: #0                                                                                                                                  +
+                           →Read l0                                                                                                                                   +
+                     →Stream l2                                                                                                                                       +
+                                                                                                                                                                      +
+ Used Indexes:                                                                                                                                                        +
+   - mz_internal.mz_hydration_statuses_ind (*** full scan ***)                                                                                                        +
+   - mz_internal.mz_wallclock_global_lag_recent_history_ind (lookup)                                                                                                  +
+   - mz_catalog.mz_objects_ind (*** full scan ***)                                                                                                                    +
+                                                                                                                                                                      +
+ Target cluster: mz_catalog_server                                                                                                                                    +
+                                                                                                                                                                      +
+ Notices:                                                                                                                                                             +
+   - Notice: Index mz_internal.mz_hydration_statuses_ind on mz_hydration_statuses(object_id, replica_id) is too wide to use for literal equalities `object_id = "u1"`.+
+     Hint: If your literal equalities filter out many rows, create an index whose key exactly matches your literal equalities: (object_id).                           +
+ 
+(1 row)
+

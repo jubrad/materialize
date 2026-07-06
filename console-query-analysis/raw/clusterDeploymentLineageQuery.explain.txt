@@ -1,0 +1,29 @@
+NOTICE:  connected to Materialize v26.31.0-dev.0
+  Environment ID: local-az1-24b39dd7-a33d-4c92-b075-eff1f636a419-0
+  Region: local/az1
+  User: materialize
+  Cluster: quickstart
+  Database: materialize
+  Schema: public
+  Session UUID: 019f0a60-9efd-7765-bc4b-6bc2f0c5460b
+
+Issue a SQL query to get started. Need help?
+  View documentation: https://materialize.com/s/docs
+  Join our Slack community: https://materialize.com/s/chat
+    
+SET
+SET
+                                                 Physical Plan                                                  
+----------------------------------------------------------------------------------------------------------------
+ Explained Query (fast path):                                                                                  +
+   →Map/Filter/Project                                                                                         +
+     Filter: (#1{current_deployment_cluster_id} = "s2")                                                        +
+       →Indexed mz_internal.mz_cluster_deployment_lineage (using mz_internal.mz_cluster_deployment_lineage_ind)+
+                                                                                                               +
+ Used Indexes:                                                                                                 +
+   - mz_internal.mz_cluster_deployment_lineage_ind (*** full scan ***)                                         +
+                                                                                                               +
+ Target cluster: mz_catalog_server                                                                             +
+ 
+(1 row)
+

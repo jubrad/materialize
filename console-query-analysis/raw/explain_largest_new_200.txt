@@ -1,0 +1,105 @@
+Explained Query:
+  Finish order_by=[#3 desc nulls_last, #2 desc nulls_last] limit=1 output=[#0..=#3]
+    →With
+      cte l0 =
+        →Differential Join %0:cluster_replicas[#2{size}] » %1:cluster_replica_sizes[#0{size}]
+          →Arrange (#2{size})
+            →Fused with Child Map/Filter/Project
+              Filter: (#2{size}) IS NOT NULL
+                →Read materialize.bench.cluster_replicas
+          →Arrange (#0{size})
+            →Read materialize.bench.cluster_replica_sizes
+      cte l1 =
+        →Distinct GroupAggregate
+          →Fused with Child Map/Filter/Project
+            Project: #0
+            Filter: (#0{right_col0_0}) IS NOT NULL AND (#1{cluster_id} = "c0")
+              →Read materialize.bench.cluster_replicas
+      cte l2 =
+        →Differential Join %1:l1[#0] » %0:hydration_statuses[#0]
+          →Arrange (#0)
+            →Fused with Child Map/Filter/Project
+              Project: #1, #2
+              Filter: NOT(like["s%"](#0{object_id})) AND (#1) IS NOT NULL
+                →Arranged materialize.bench.hydration_statuses
+                  Key: (#0{object_id}, #1{replica_id})
+          →Arranged l1
+      cte l3 =
+        →Consolidating Monotonic GroupAggregate
+          Aggregations: max
+          Key:
+            Project: #0
+          →Differential Join %1:l1[#0] » %0:cluster_replica_metrics[#0{replica_id}]
+            →Arranged materialize.bench.cluster_replica_metrics
+            →Arranged l1
+      cte l4 =
+        →Distinct GroupAggregate
+          →Union
+            →Fused with Child Map/Filter/Project
+              Project: #0
+                →Read l0
+            →Constant (1 row)
+    →Return
+      →Map/Filter/Project
+        Project: #0, #1, #7, #8
+        Map: uint8_to_text(#5{heap_limit}), (#6 = 0)
+          →Accumulable GroupAggregate
+            Simple aggregates: sum(boolean_to_integer(NOT(case when (#6) IS NULL then null else #5 end)))
+            Key:
+              Project: #0, #1, #3, #4, #2, #9
+              Map: case when (#8) IS NULL then null else #7 end
+            →Delta Join [%0:l0[#0] » %1[#0] » %2[#0]] [%1[#0] » %0:l0[#0] » %2[#0]] [%2[#0] » %0:l0[#0] » %1[#0]]
+              →Arrange (#0)
+                →Fused with Child Map/Filter/Project
+                  Project: #0, #2..=#5
+                  Filter: (#1{cluster_id} = "c0")
+                    →Read l0
+              →Arrange (#0)
+                →Union
+                  →Fused with Child Map/Filter/Project
+                    Project: #0..=#2
+                    Map: true
+                      →Read l2
+                  →Map/Filter/Project
+                    Project: #0..=#2
+                    Map: null, null
+                      →Threshold Diffs #0
+                        →Arrange (#0)
+                          →Consolidating Union
+                            →Negate Diffs
+                              →Fused with Child Map/Filter/Project
+                                Project: #0
+                                  →Read l2
+                            →Unarranged Raw Stream
+                              →Arranged l4
+              →Arrange (#0)
+                →Union
+                  →Fused with Child Map/Filter/Project
+                    Project: #0..=#2
+                    Map: true
+                      →Arranged l3
+                        Key: (#0)
+                  →Map/Filter/Project
+                    Project: #0..=#2
+                    Map: null, null
+                      →Threshold Diffs #0
+                        →Arrange (#0)
+                          →Consolidating Union
+                            →Negate Diffs
+                              →Fused with Child Map/Filter/Project
+                                Project: #0
+                                  →Arranged l3
+                                    Key: (#0)
+                            →Unarranged Raw Stream
+                              →Arranged l4
+
+Source materialize.bench.cluster_replica_sizes
+  project=(#0, #1, #3, #4)
+  filter=((#0{size}) IS NOT NULL)
+  pushdown=((#0{size}) IS NOT NULL)
+
+Used Indexes:
+  - materialize.bench.hydration_statuses_idx (*** full scan ***)
+  - materialize.bench.cluster_replica_metrics_idx (differential join)
+
+Target cluster: bench

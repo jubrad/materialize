@@ -1,0 +1,111 @@
+NOTICE:  connected to Materialize v26.31.0-dev.0
+  Environment ID: local-az1-24b39dd7-a33d-4c92-b075-eff1f636a419-0
+  Region: local/az1
+  User: materialize
+  Cluster: quickstart
+  Database: materialize
+  Schema: public
+  Session UUID: 019f0a60-9f20-7d3f-bc99-c8075f5a78a5
+
+Issue a SQL query to get started. Need help?
+  View documentation: https://materialize.com/s/docs
+  Join our Slack community: https://materialize.com/s/chat
+    
+SET
+SET
+                                                   Physical Plan                                                   
+-------------------------------------------------------------------------------------------------------------------
+ Explained Query:                                                                                                 +
+   Finish order_by=[#3 desc nulls_last, #2 desc nulls_last] limit=1 output=[#0..=#3]                              +
+     →With                                                                                                        +
+       cte l0 =                                                                                                   +
+         →Differential Join %1:mz_cluster_replica_sizes[#0{size}] » %0:mz_cluster_replicas[#3{size}]              +
+           →Arrange (#3{size})                                                                                    +
+             →Fused with Child Map/Filter/Project                                                                 +
+               Project: #0..=#3                                                                                   +
+               Filter: (#3{size}) IS NOT NULL                                                                     +
+                 →Arranged mz_catalog.mz_cluster_replicas                                                         +
+                   Key: (#0{id})                                                                                  +
+           →Arranged mz_catalog.mz_cluster_replica_sizes                                                          +
+       cte l1 =                                                                                                   +
+         →Consolidating Monotonic GroupAggregate                                                                  +
+           Aggregations: max                                                                                      +
+           Key:                                                                                                   +
+             Project: #0                                                                                          +
+           →Fused with Child Map/Filter/Project                                                                   +
+             Project: #0, #6                                                                                      +
+               →Arranged mz_internal.mz_cluster_replica_metrics                                                   +
+                 Key: (#0{replica_id})                                                                            +
+       cte l2 =                                                                                                   +
+         →Distinct GroupAggregate                                                                                 +
+           →Fused with Child Map/Filter/Project                                                                   +
+             Project: #0                                                                                          +
+               →Read l0                                                                                           +
+     →Return                                                                                                      +
+       →Map/Filter/Project                                                                                        +
+         Project: #0, #1, #7, #8                                                                                  +
+         Map: uint8_to_text(#5{heap_limit}), (#6 = 0)                                                             +
+           →Accumulable GroupAggregate                                                                            +
+             Simple aggregates: sum(boolean_to_integer(NOT(case when (#6) IS NULL then null else #5 end)))        +
+             Key:                                                                                                 +
+               Project: #0, #1, #3, #4, #2, #9                                                                    +
+               Map: case when (#8) IS NULL then null else #7 end                                                  +
+             →Delta Join [%0:l0[#0] » %1[#0] » %2[#0]] [%1[#0] » %0:l0[#0] » %2[#0]] [%2[#0] » %0:l0[#0] » %1[#0]]+
+               →Arrange (#0)                                                                                      +
+                 →Fused with Child Map/Filter/Project                                                             +
+                   Project: #0, #1, #3..=#6                                                                       +
+                   Filter: (#2{cluster_id} = "s2")                                                                +
+                     →Read l0                                                                                     +
+               →Arrange (#0)                                                                                      +
+                 →Union                                                                                           +
+                   →Fused with Child Map/Filter/Project                                                           +
+                     Project: #1..=#3                                                                             +
+                     Filter: NOT(like["s%"](#0{object_id})) AND (#1) IS NOT NULL                                  +
+                     Map: true                                                                                    +
+                       →Arranged mz_internal.mz_hydration_statuses                                                +
+                         Key: (#0{object_id}, #1{replica_id})                                                     +
+                   →Map/Filter/Project                                                                            +
+                     Project: #0..=#2                                                                             +
+                     Map: null, null                                                                              +
+                       →Threshold Diffs #0                                                                        +
+                         →Arrange (#0)                                                                            +
+                           →Consolidating Union                                                                   +
+                             →Negate Diffs                                                                        +
+                               →Fused with Child Map/Filter/Project                                               +
+                                 Project: #1                                                                      +
+                                 Filter: NOT(like["s%"](#0{object_id})) AND (#1) IS NOT NULL                      +
+                                   →Arranged mz_internal.mz_hydration_statuses                                    +
+                                     Key: (#0{object_id}, #1{replica_id})                                         +
+                             →Unarranged Raw Stream                                                               +
+                               →Arranged l2                                                                       +
+               →Arrange (#0)                                                                                      +
+                 →Union                                                                                           +
+                   →Fused with Child Map/Filter/Project                                                           +
+                     Project: #0..=#2                                                                             +
+                     Map: true                                                                                    +
+                       →Arranged l1                                                                               +
+                         Key: (#0)                                                                                +
+                   →Map/Filter/Project                                                                            +
+                     Project: #0..=#2                                                                             +
+                     Map: null, null                                                                              +
+                       →Threshold Diffs #0                                                                        +
+                         →Arrange (#0)                                                                            +
+                           →Consolidating Union                                                                   +
+                             →Negate Diffs                                                                        +
+                               →Fused with Child Map/Filter/Project                                               +
+                                 Project: #0                                                                      +
+                                   →Arranged l1                                                                   +
+                                     Key: (#0)                                                                    +
+                             →Unarranged Raw Stream                                                               +
+                               →Arranged l2                                                                       +
+                                                                                                                  +
+ Used Indexes:                                                                                                    +
+   - mz_internal.mz_hydration_statuses_ind (*** full scan ***)                                                    +
+   - mz_catalog.mz_cluster_replicas_ind (*** full scan ***)                                                       +
+   - mz_catalog.mz_cluster_replica_sizes_ind (differential join)                                                  +
+   - mz_internal.mz_cluster_replica_metrics_ind (*** full scan ***)                                               +
+                                                                                                                  +
+ Target cluster: mz_catalog_server                                                                                +
+ 
+(1 row)
+

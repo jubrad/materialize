@@ -1,0 +1,31 @@
+NOTICE:  connected to Materialize v26.31.0-dev.0
+  Environment ID: local-az1-24b39dd7-a33d-4c92-b075-eff1f636a419-0
+  Region: local/az1
+  User: materialize
+  Cluster: quickstart
+  Database: materialize
+  Schema: public
+  Session UUID: 019f0a60-9fc5-7831-af02-530c16bdf639
+
+Issue a SQL query to get started. Need help?
+  View documentation: https://materialize.com/s/docs
+  Join our Slack community: https://materialize.com/s/chat
+    
+SET
+SET
+                                                               Physical Plan                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Explained Query (fast path):                                                                                                              +
+   Finish order_by=[#0 asc nulls_last] output=[#0..=#18]                                                                                   +
+     →Map/Filter/Project                                                                                                                   +
+       Project: #1..=#6, #13, #14, #11, #12, #7..=#10, #15..=#17, #0, #18                                                                  +
+       →Index Lookup on mz_internal.mz_console_cluster_utilization_overview (using mz_internal.mz_console_cluster_utilization_overview_ind)+
+         Lookup values: ("s2")                                                                                                             +
+                                                                                                                                           +
+ Used Indexes:                                                                                                                             +
+   - mz_internal.mz_console_cluster_utilization_overview_ind (lookup)                                                                      +
+                                                                                                                                           +
+ Target cluster: mz_catalog_server                                                                                                         +
+ 
+(1 row)
+
