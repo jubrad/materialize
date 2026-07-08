@@ -57,6 +57,10 @@ pub struct ServiceArgs {
     pgwire_listen_addr: SocketAddr,
     #[clap(long, value_name = "HOST:PORT")]
     https_listen_addr: SocketAddr,
+    /// Listen address for WebTransport (HTTP/3) pgwire connections.
+    /// Requires TLS to be configured. Disabled if not set.
+    #[clap(long, value_name = "HOST:PORT")]
+    webtransport_listen_addr: Option<SocketAddr>,
     #[clap(flatten)]
     tls: TlsCliArgs,
     #[clap(long, value_name = "HOST:PORT")]
@@ -302,6 +306,7 @@ pub async fn run(
         args.internal_http_listen_addr,
         args.pgwire_listen_addr,
         args.https_listen_addr,
+        args.webtransport_listen_addr,
         cancellation_resolver,
         resolver,
         args.https_sni_resolver_template,

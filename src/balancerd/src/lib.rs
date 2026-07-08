@@ -18,6 +18,7 @@
 
 mod codec;
 mod dyncfgs;
+mod webtransport;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -91,6 +92,8 @@ pub struct BalancerConfig {
     pgwire_listen_addr: SocketAddr,
     /// Listen address for HTTPS connections.
     https_listen_addr: SocketAddr,
+    /// Listen address for WebTransport (HTTP/3) pgwire connections. If None, disabled.
+    webtransport_listen_addr: Option<SocketAddr>,
     /// DNS resolver for pgwire cancellation requests
     cancellation_resolver: CancellationResolver,
     /// DNS resolver.
@@ -116,6 +119,7 @@ impl BalancerConfig {
         internal_http_listen_addr: SocketAddr,
         pgwire_listen_addr: SocketAddr,
         https_listen_addr: SocketAddr,
+        webtransport_listen_addr: Option<SocketAddr>,
         cancellation_resolver: CancellationResolver,
         resolver: Resolver,
         https_sni_addr_template: String,
@@ -137,6 +141,7 @@ impl BalancerConfig {
             internal_http_listen_addr,
             pgwire_listen_addr,
             https_listen_addr,
+            webtransport_listen_addr,
             cancellation_resolver,
             resolver,
             https_sni_addr_template,
@@ -186,16 +191,50 @@ pub struct BalancerService {
     pub pgwire: (ListenerHandle, Pin<Box<dyn ConnectionStream>>),
     pub https: (ListenerHandle, Pin<Box<dyn ConnectionStream>>),
     pub internal_http: (ListenerHandle, Pin<Box<dyn ConnectionStream>>),
+    /// The local address the WebTransport listener is bound to, if enabled.
+    pub webtransport_local_addr: Option<SocketAddr>,
+    resolver: Arc<Resolver>,
+    wt_bound: Option<webtransport::BoundWebTransport>,
     _metrics: BalancerMetrics,
     configs: ConfigSet,
 }
 
 impl BalancerService {
-    pub async fn new(cfg: BalancerConfig) -> Result<Self, anyhow::Error> {
+    pub async fn new(mut cfg: BalancerConfig) -> Result<Self, anyhow::Error> {
         let pgwire = listen(&cfg.pgwire_listen_addr).await?;
         let https = listen(&cfg.https_listen_addr).await?;
         let internal_http = listen(&cfg.internal_http_listen_addr).await?;
         let metrics = BalancerMetrics::new(&cfg);
+
+        // Extract the resolver into an Arc so it can be shared between the
+        // pgwire balancer and the optional WebTransport balancer. A placeholder
+        // is left in cfg.resolver — it must not be used after this point.
+        let resolver = Arc::new(std::mem::replace(
+            &mut cfg.resolver,
+            Resolver::Static(String::new()),
+        ));
+
+        // Bind the WebTransport endpoint now (port 0 → OS-assigned) so that
+        // callers can discover the actual address before calling serve().
+        let wt_bound = if let Some(addr) = cfg.webtransport_listen_addr {
+            match &cfg.tls {
+                Some(tls) => Some(
+                    webtransport::BoundWebTransport::bind(addr, &tls.cert, &tls.key)
+                        .await
+                        .context("binding WebTransport listener")?,
+                ),
+                None => {
+                    warn!(
+                        "--webtransport-listen-addr requires TLS (--tls-cert/--tls-key); \
+                         WebTransport listener disabled"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let webtransport_local_addr = wt_bound.as_ref().map(|b| b.local_addr);
         let mut configs = ConfigSet::default();
         configs = dyncfgs::all_dyncfgs(configs);
         dyncfgs::set_defaults(&configs, cfg.default_configs.clone())?;
@@ -292,6 +331,9 @@ impl BalancerService {
             pgwire,
             https,
             internal_http,
+            webtransport_local_addr,
+            resolver,
+            wt_bound,
             _metrics: metrics,
             configs,
         })
@@ -320,9 +362,11 @@ impl BalancerService {
         let https_addr = self.https.0.local_addr();
         let internal_http_addr = self.internal_http.0.local_addr();
 
+        let shared_resolver = self.resolver;
+
         {
             let pgwire = PgwireBalancer {
-                resolver: Arc::new(self.cfg.resolver),
+                resolver: Arc::clone(&shared_resolver),
                 cancellation_resolver: Arc::new(self.cfg.cancellation_resolver),
                 tls: pgwire_tls,
                 internal_tls: self.cfg.internal_tls,
@@ -408,6 +452,17 @@ impl BalancerService {
                 warn!("internal_http server exited");
             });
         }
+        if let Some(bound) = self.wt_bound {
+            let resolver = Arc::clone(&shared_resolver);
+            let internal_tls = self.cfg.internal_tls;
+            set.spawn_named(|| "webtransport_stream", async move {
+                if let Err(e) = bound.serve(resolver, internal_tls).await {
+                    warn!("WebTransport server error: {e}");
+                }
+                warn!("WebTransport server exited");
+            });
+        }
+
         #[cfg(unix)]
         {
             let mut sigterm =
@@ -427,6 +482,9 @@ impl BalancerService {
         println!(" pgwire address: {}", pgwire_addr);
         println!(" HTTPS address: {}", https_addr);
         println!(" internal HTTP address: {}", internal_http_addr);
+        if let Some(wt_addr) = self.webtransport_local_addr {
+            println!(" WebTransport address: {} (UDP/QUIC)", wt_addr);
+        }
 
         // Wait for all tasks to exit, which can happen on SIGTERM.
         while let Some(res) = set.join_next().await {

@@ -52,6 +52,7 @@ tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+wtransport.workspace = true
 
 [dev-dependencies]
 mz-environmentd = { path = "../environmentd", default-features = false, features = ["test"] }
@@ -59,6 +60,7 @@ mz-frontegg-mock = { path = "../frontegg-mock" }
 postgres.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
+wtransport = { workspace = true, features = ["dangerous-configuration"] }
 
 [features]
 default = ["mz-alloc-default"]

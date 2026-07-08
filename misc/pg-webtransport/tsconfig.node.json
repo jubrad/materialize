@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "outDir": "./dist/node",
+    "rootDir": "./src",
+    // Relax checks that conflict with @types/node vs browser type differences
+    "exactOptionalPropertyTypes": false,
+    "strictFunctionTypes": false
+  },
+  "include": ["src/repl.ts", "src/client.ts", "src/codec.ts", "src/auth.ts", "src/test-integration.ts"]
+}

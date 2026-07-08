@@ -17,6 +17,8 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use wtransport::{ClientConfig, Endpoint, RecvStream, SendStream};
+
 use chrono::Utc;
 use domain::resolv::StubResolver;
 use futures::StreamExt;
@@ -185,6 +187,7 @@ async fn test_balancer() {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            None, // webtransport_listen_addr: disabled in tests
             cancellation_resolver,
             resolver,
             envd_server.http_local_addr().to_string(),
@@ -380,5 +383,306 @@ async fn test_balancer() {
             })
             .await
             .unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebTransport tests
+// ---------------------------------------------------------------------------
+
+/// Read one backend message: (type_byte, payload).
+/// The payload does NOT include the 4-byte length prefix.
+async fn wt_read_msg(recv: &mut RecvStream) -> (u8, Vec<u8>) {
+    let mut header = [0u8; 5];
+    recv.read_exact(&mut header).await.unwrap();
+    let msg_type = header[0];
+    let length = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+    let mut payload = vec![0u8; length - 4];
+    if !payload.is_empty() {
+        recv.read_exact(&mut payload).await.unwrap();
+    }
+    (msg_type, payload)
+}
+
+/// Run startup + auth (cleartext only) on a WebTransport stream pair.
+/// Returns (conn_id, secret_key) from BackendKeyData.
+async fn wt_startup(
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    user: &str,
+    database: &str,
+    password: &str,
+) -> (u32, u32) {
+    // Encode startup message: 4-byte length + 4-byte version + params + double null.
+    const VERSION_3: i32 = 196608; // 0x00030000
+    let mut params_bytes = Vec::new();
+    for (k, v) in [("user", user), ("database", database)] {
+        params_bytes.extend_from_slice(k.as_bytes());
+        params_bytes.push(0);
+        params_bytes.extend_from_slice(v.as_bytes());
+        params_bytes.push(0);
+    }
+    params_bytes.push(0); // end of params
+    let length = (4 + 4 + params_bytes.len()) as u32;
+    let mut msg = Vec::new();
+    msg.extend_from_slice(&length.to_be_bytes());
+    msg.extend_from_slice(&VERSION_3.to_be_bytes());
+    msg.extend_from_slice(&params_bytes);
+    send.write_all(&msg).await.unwrap();
+
+    let mut conn_id = 0u32;
+    let mut secret_key = 0u32;
+
+    loop {
+        let (msg_type, payload) = wt_read_msg(recv).await;
+        match msg_type {
+            b'R' => {
+                // Authentication message
+                let auth_type =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                match auth_type {
+                    0 => {} // AuthenticationOk — ignore
+                    3 => {
+                        // AuthenticationCleartextPassword — send password
+                        let pwd = password.as_bytes();
+                        let length = (4 + pwd.len() + 1) as u32;
+                        let mut msg = vec![b'p'];
+                        msg.extend_from_slice(&length.to_be_bytes());
+                        msg.extend_from_slice(pwd);
+                        msg.push(0);
+                        send.write_all(&msg).await.unwrap();
+                    }
+                    _ => panic!("unexpected auth type {auth_type}"),
+                }
+            }
+            b'K' => {
+                // BackendKeyData
+                conn_id =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                secret_key =
+                    u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+            }
+            b'S' => {} // ParameterStatus — ignore
+            b'Z' => break, // ReadyForQuery
+            b'E' => panic!("startup error: {}", parse_pg_error(&payload)),
+            _ => {}
+        }
+    }
+
+    (conn_id, secret_key)
+}
+
+/// Send a simple query and collect all DataRow columns as strings.
+async fn wt_simple_query(
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    query: &str,
+) -> Vec<Vec<String>> {
+    let q = query.as_bytes();
+    let length = (4 + q.len() + 1) as u32;
+    let mut msg = vec![b'Q'];
+    msg.extend_from_slice(&length.to_be_bytes());
+    msg.extend_from_slice(q);
+    msg.push(0);
+    send.write_all(&msg).await.unwrap();
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    loop {
+        let (msg_type, payload) = wt_read_msg(recv).await;
+        match msg_type {
+            b'T' => {} // RowDescription — ignore field metadata
+            b'D' => {
+                // DataRow
+                let n = u16::from_be_bytes([payload[0], payload[1]]) as usize;
+                let mut row = Vec::with_capacity(n);
+                let mut offset = 2;
+                for _ in 0..n {
+                    let len = i32::from_be_bytes([
+                        payload[offset],
+                        payload[offset + 1],
+                        payload[offset + 2],
+                        payload[offset + 3],
+                    ]);
+                    offset += 4;
+                    if len < 0 {
+                        row.push(String::new()); // NULL
+                    } else {
+                        let s = std::str::from_utf8(
+                            &payload[offset..offset + len as usize],
+                        )
+                        .unwrap()
+                        .to_owned();
+                        offset += len as usize;
+                        row.push(s);
+                    }
+                }
+                rows.push(row);
+            }
+            b'C' => {} // CommandComplete
+            b'Z' => break, // ReadyForQuery
+            b'E' => panic!("query error: {}", parse_pg_error(&payload)),
+            b'N' => {} // NoticeResponse
+            _ => {}
+        }
+    }
+    rows
+}
+
+/// Extract the 'M' (message) field from an ErrorResponse payload.
+fn parse_pg_error(payload: &[u8]) -> String {
+    let mut i = 0;
+    while i < payload.len() && payload[i] != 0 {
+        let field_type = payload[i];
+        i += 1;
+        let start = i;
+        while i < payload.len() && payload[i] != 0 {
+            i += 1;
+        }
+        if field_type == b'M' {
+            return String::from_utf8_lossy(&payload[start..i]).into_owned();
+        }
+        i += 1; // skip null terminator
+    }
+    "<no message>".to_owned()
+}
+
+#[mz_ore::test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
+#[cfg_attr(miri, ignore)] // too slow
+async fn test_webtransport() {
+    let ca = Ca::new_root("test ca").unwrap();
+    let (server_cert, server_key) = ca
+        .request_cert("server", vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])
+        .unwrap();
+    let metrics_registry = MetricsRegistry::new();
+
+    // Frontegg setup (same as test_balancer).
+    let tenant_id = Uuid::new_v4();
+    let email = "wt_user@_.com".to_string();
+    let password = Uuid::new_v4().to_string();
+    let client_id = Uuid::new_v4();
+    let secret = Uuid::new_v4();
+    let initial_api_tokens = vec![ApiToken {
+        client_id: client_id.clone(),
+        secret: secret.clone(),
+        description: None,
+        created_at: Utc::now(),
+    }];
+    let users = BTreeMap::from([(
+        email.clone(),
+        UserConfig {
+            id: Uuid::new_v4(),
+            email: email.clone(),
+            password,
+            tenant_id,
+            initial_api_tokens,
+            roles: Vec::new(),
+            auth_provider: None,
+            verified: None,
+            metadata: None,
+        },
+    )]);
+    let issuer = "frontegg-mock".to_owned();
+    let encoding_key =
+        EncodingKey::from_rsa_pem(&ca.pkey.private_key_to_pem_pkcs8().unwrap()).unwrap();
+    let decoding_key = DecodingKey::from_rsa_pem(&ca.pkey.public_key_to_pem().unwrap()).unwrap();
+    let frontegg_server = FronteggMockServer::start(
+        None,
+        issuer,
+        encoding_key,
+        decoding_key,
+        users,
+        BTreeMap::new(),
+        None,
+        SYSTEM_TIME.clone(),
+        50,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let frontegg_auth = FronteggAuthentication::new(
+        FronteggConfig {
+            admin_api_token_url: frontegg_server.auth_api_token_url(),
+            decoding_key: DecodingKey::from_rsa_pem(&ca.pkey.public_key_to_pem().unwrap())
+                .unwrap(),
+            tenant_id: Some(tenant_id),
+            now: SYSTEM_TIME.clone(),
+            admin_role: "mzadmin".to_string(),
+            refresh_drop_lru_size: DEFAULT_REFRESH_DROP_LRU_CACHE_SIZE,
+            refresh_drop_factor: DEFAULT_REFRESH_DROP_FACTOR,
+        },
+        mz_frontegg_auth::Client::default(),
+        &metrics_registry,
+    );
+    let frontegg_password = format!("mzp_{client_id}{secret}");
+
+    // Start environmentd without TLS — the WebTransport balancer uses
+    // internal_tls=false so the backend connection is plain TCP.
+    let envd_server = test_util::TestHarness::default()
+        .with_frontegg_auth(&frontegg_auth)
+        .with_metrics_registry(metrics_registry)
+        .start()
+        .await;
+
+    // Start balancer with WebTransport enabled on an OS-assigned port.
+    let (_, reload_rx) = futures::channel::mpsc::channel(1);
+    let balancer_cfg = BalancerConfig::new(
+        &BUILD_INFO,
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
+        CancellationResolver::Static(envd_server.sql_local_addr().to_string()),
+        Resolver::Static(envd_server.sql_local_addr().to_string()),
+        envd_server.http_local_addr().to_string(),
+        Some(TlsCertConfig {
+            cert: server_cert.clone(),
+            key: server_key.clone(),
+        }),
+        false, // internal_tls: backend is plain TCP
+        MetricsRegistry::new(),
+        Box::pin(reload_rx),
+        None,
+        None,
+        Duration::ZERO,
+        None,
+        None,
+        None,
+        TracingHandle::disabled(),
+        vec![],
+    );
+    let balancer = BalancerService::new(balancer_cfg).await.unwrap();
+    let wt_addr = balancer
+        .webtransport_local_addr
+        .expect("WebTransport listener should be bound");
+    task::spawn(|| "wt_balancer", async move {
+        balancer.serve().await.unwrap();
+    });
+
+    let wt_url = format!("https://127.0.0.1:{}/pgwire", wt_addr.port());
+
+    // Build a wtransport client that skips certificate validation (test CA).
+    let client_config = ClientConfig::builder()
+        .with_bind_default()
+        .with_no_cert_validation()
+        .build();
+    let endpoint = Endpoint::client(client_config).unwrap();
+    let conn = endpoint.connect(&wt_url).await.unwrap();
+
+    // --- Sub-test 1: basic query ---
+    {
+        let (mut send, mut recv) = conn.open_bi().await.unwrap().await.unwrap();
+        let _ = wt_startup(&mut send, &mut recv, &email, "materialize", &frontegg_password).await;
+        let rows = wt_simple_query(&mut send, &mut recv, "SELECT 1").await;
+        assert_eq!(rows, vec![vec!["1".to_string()]]);
+    }
+
+    // --- Sub-test 2: multiple queries on a second stream ---
+    {
+        let (mut send2, mut recv2) = conn.open_bi().await.unwrap().await.unwrap();
+        let (_conn_id, _secret_key) =
+            wt_startup(&mut send2, &mut recv2, &email, "materialize", &frontegg_password).await;
+        let rows = wt_simple_query(&mut send2, &mut recv2, "SELECT 2 AS two").await;
+        assert_eq!(rows, vec![vec!["2".to_string()]]);
     }
 }

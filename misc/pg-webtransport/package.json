@@ -1,0 +1,51 @@
+{
+  "name": "@materialize/pg-webtransport",
+  "version": "0.1.0",
+  "description": "Browser pgwire client over WebTransport for Materialize",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "bin": {
+    "mzwt": "./dist/node/repl.js"
+  },
+  "scripts": {
+    "build": "tsc && tsc -p tsconfig.node.json",
+    "build:repl": "tsc -p tsconfig.node.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "clean": "rm -rf dist",
+    "test": "tsc -p tsconfig.node.json && node --test dist/node/test-integration.js"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.4.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "license": "Apache-2.0",
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e",
+  "dependencies": {
+    "@fails-components/webtransport": "^1.6.3",
+    "@fails-components/webtransport-transport-http3-quiche": "^1.6.3",
+    "@types/pg": "^8.20.0",
+    "pg": "^8.21.0",
+    "yarn": "^1.22.22"
+  }
+}

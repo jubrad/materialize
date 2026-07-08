@@ -535,6 +535,7 @@ uuid = "1.19.0"
 version-compare = "0.2.1"
 walkdir = "2.5.0"
 which = "8"
+wtransport = "0.7"
 yansi = "1.0.1"
 zeroize = { version = "1.8.2", features = ["derive", "serde"] }
 zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2"] }
