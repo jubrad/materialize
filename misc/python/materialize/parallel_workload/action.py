@@ -1935,6 +1935,7 @@ class FlipFlagsAction(Action):
             "oidc_group_role_sync_strict",
             "console_oidc_client_id",
             "console_oidc_scopes",
+            "persist_pg_consensus_read_committed",
             "enable_cluster_controller",
             "cluster_controller_tick_interval",
             "enable_background_alter_cluster",
