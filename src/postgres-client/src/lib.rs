@@ -27,15 +27,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use deadpool::managed::{self, Hook, HookError, Metrics, Object, Pool, RecycleResult};
+use deadpool::managed::{self, Hook, HookError, Metrics, Object, Pool, RecycleResult, Timeouts};
 use deadpool_postgres::tokio_postgres::{self, Config};
 use deadpool_postgres::{
     ClientWrapper as DeadpoolClient, Manager as PgManager, ManagerConfig, PoolError,
     RecyclingMethod, Runtime, Status,
 };
+use futures::future::join_all;
 use mz_ore::cast::{CastFrom, CastLossy};
 use mz_ore::metrics::Counter;
 use mz_ore::now::SYSTEM_TIME;
+use mz_ore::task::AbortOnDropHandle;
 use mz_ore::url::SensitiveUrl;
 use tracing::debug;
 
@@ -67,6 +69,15 @@ pub trait PostgresClientKnobs: std::fmt::Debug + Send + Sync {
     /// Server-side `statement_timeout` to set on each connection. A value of
     /// zero is a sentinel that means "do not set a statement timeout".
     fn statement_timeout(&self) -> Duration;
+    /// Minimum number of idle connections the pool proactively maintains,
+    /// clamped to half of `connection_pool_max_size`. Zero disables
+    /// pre-warming. Keeping a floor of ready connections means a burst of
+    /// demand after connections are lost (e.g. a database node drain closing
+    /// its share of the pool) does not pay connection establishment on the
+    /// acquire path.
+    fn connection_pool_min_idle(&self) -> usize {
+        0
+    }
 }
 
 /// The transaction isolation level applied to new connections.
@@ -242,6 +253,11 @@ pub struct PostgresClient {
     pool: Pool<Manager>,
     knobs: Arc<dyn PostgresClientKnobs>,
     metrics: PostgresClientMetrics,
+    /// Background task that maintains `connection_pool_min_idle` idle
+    /// connections. Spawned lazily on the first acquire (opening a client
+    /// does not require a Tokio runtime, acquiring does). Aborted when the
+    /// client is dropped.
+    prewarm_task: std::sync::OnceLock<AbortOnDropHandle<()>>,
 }
 
 impl std::fmt::Debug for PostgresClient {
@@ -332,7 +348,66 @@ impl PostgresClient {
             pool,
             knobs,
             metrics: config.metrics,
+            prewarm_task: std::sync::OnceLock::new(),
         })
+    }
+
+    /// How often the pre-warm task checks the pool's idle floor.
+    const PREWARM_INTERVAL: Duration = Duration::from_secs(1);
+    /// How long a pre-warm acquire may wait for the pool. Kept short so that
+    /// pre-warming never meaningfully competes with real acquires when the
+    /// pool is saturated.
+    const PREWARM_ACQUIRE_TIMEOUT: Duration = Duration::from_millis(100);
+
+    fn ensure_prewarm_task(&self) {
+        self.prewarm_task.get_or_init(|| {
+            let pool = self.pool.clone();
+            let knobs = Arc::clone(&self.knobs);
+            mz_ore::task::spawn(|| "postgres_client_prewarm", async move {
+                let mut interval = tokio::time::interval(Self::PREWARM_INTERVAL);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    interval.tick().await;
+                    Self::prewarm_tick(&pool, &knobs).await;
+                }
+            })
+            .abort_on_drop()
+        });
+    }
+
+    /// Tops the pool up to `connection_pool_min_idle` idle connections by
+    /// briefly holding that many connections at once (forcing creates for the
+    /// shortfall) and returning them all to the pool.
+    ///
+    /// The hold briefly makes the held connections unavailable to real
+    /// acquires, so this only runs when the pool is mostly quiet, and the
+    /// floor is clamped to half the pool cap. A burst of demand arriving
+    /// mid-hold thus always finds at least half the cap available.
+    async fn prewarm_tick(pool: &Pool<Manager>, knobs: &Arc<dyn PostgresClientKnobs>) {
+        let min_idle = knobs.connection_pool_min_idle();
+        if min_idle == 0 {
+            return;
+        }
+        let status = pool.status();
+        let target = min_idle.min(status.max_size / 2);
+        let in_use = status.size.saturating_sub(status.available);
+        // Skip unless the pool is mostly quiet: no queued acquires and less
+        // than half the cap in use. Otherwise demand is already driving
+        // connection creation and holding extra connections would only starve
+        // real acquires.
+        if status.waiting > 0 || in_use * 2 > status.max_size || status.available >= target {
+            return;
+        }
+        let timeouts = Timeouts {
+            wait: Some(Self::PREWARM_ACQUIRE_TIMEOUT),
+            ..Timeouts::default()
+        };
+        // Holding all `target` connections simultaneously is what forces the
+        // pool to create the shortfall rather than handing the same idle
+        // connection out repeatedly. Dropping them returns them as idle.
+        let holds = join_all((0..target).map(|_| pool.timeout_get(&timeouts))).await;
+        let created = holds.iter().filter(|r| r.is_ok()).count();
+        debug!("connection pool pre-warm held {created}/{target} connections");
     }
 
     fn status_metrics(&self, status: Status) {
@@ -352,6 +427,7 @@ impl PostgresClient {
 
     /// Gets connection from the pool or waits for one to become available.
     pub async fn get_connection(&self) -> Result<Connection, PoolError> {
+        self.ensure_prewarm_task();
         let start = Instant::now();
         // note that getting the pool status here requires briefly locking the pool
         let status = self.pool.status();
@@ -390,11 +466,15 @@ mod tests {
     #[derive(Debug)]
     struct TestKnobs {
         max_size: AtomicUsize,
+        min_idle: AtomicUsize,
     }
 
     impl PostgresClientKnobs for TestKnobs {
         fn connection_pool_max_size(&self) -> usize {
             self.max_size.load(Ordering::SeqCst)
+        }
+        fn connection_pool_min_idle(&self) -> usize {
+            self.min_idle.load(Ordering::SeqCst)
         }
         fn connection_pool_max_wait(&self) -> Option<Duration> {
             Some(Duration::from_secs(1))
@@ -439,6 +519,7 @@ mod tests {
         };
         let knobs = Arc::new(TestKnobs {
             max_size: AtomicUsize::new(2),
+            min_idle: AtomicUsize::new(0),
         });
         let dyn_knobs: Arc<dyn PostgresClientKnobs> = Arc::<TestKnobs>::clone(&knobs);
         let config = PostgresClientConfig::new(
@@ -463,5 +544,46 @@ mod tests {
         drop(conn2);
         let _conn3 = client.get_connection().await.expect("connection");
         assert_eq!(client.status().max_size, 1);
+    }
+
+    /// Verifies that the pre-warm task tops the pool up to
+    /// `connection_pool_min_idle` idle connections without any acquire
+    /// traffic. Opt-in like `pool_resize_applies_on_acquire`.
+    #[mz_ore::test(tokio::test(flavor = "multi_thread"))]
+    async fn pool_prewarm_maintains_idle_floor() {
+        let url = match std::env::var("MZ_PERSIST_EXTERNAL_STORAGE_TEST_POSTGRES_URL") {
+            Ok(url) => SensitiveUrl::from_str(&url).expect("valid url"),
+            Err(_) => return,
+        };
+        let knobs = Arc::new(TestKnobs {
+            // min_idle is clamped to half the cap, so a floor of 3 needs a
+            // cap of at least 6 to be reachable.
+            max_size: AtomicUsize::new(8),
+            min_idle: AtomicUsize::new(3),
+        });
+        let dyn_knobs: Arc<dyn PostgresClientKnobs> = Arc::<TestKnobs>::clone(&knobs);
+        let config = PostgresClientConfig::new(
+            url,
+            dyn_knobs,
+            PostgresClientMetrics::new(&MetricsRegistry::new(), "mz_postgres_client_test"),
+        );
+        let client = PostgresClient::open(config).expect("open client");
+
+        // The pre-warm task starts on the first acquire. Drop the connection
+        // immediately, then wait for the task to build the idle floor.
+        drop(client.get_connection().await.expect("connection"));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = client.status();
+            if status.available >= 3 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "pre-warm never reached min_idle=3, status: {status:?}",
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 }
