@@ -6942,6 +6942,8 @@ dependencies = [
  "rand 0.10.3",
  "scopeguard",
  "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "smallvec",
  "thiserror 2.0.21",
  "timely",

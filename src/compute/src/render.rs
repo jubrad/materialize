@@ -282,8 +282,11 @@ pub fn build_compute_dataflow(
                         ops
                     });
 
-                    let snapshot_mode = if import.with_snapshot || !subscribe_snapshot_optimization
-                    {
+                    let snapshot_mode = if crate::checkpoint::restoring() {
+                        // Restored arrangements already hold the inputs' contents before the
+                        // restore frontier, which is `as_of + 1`.
+                        SnapshotMode::Exclude
+                    } else if import.with_snapshot || !subscribe_snapshot_optimization {
                         SnapshotMode::Include
                     } else {
                         compute_state.metrics.inc_subscribe_snapshot_optimization();
@@ -1328,6 +1331,10 @@ impl<'scope, T: RenderTimestamp + MaybeBucketByTime> Context<'scope, T> {
                 // We should advance times in constant collections to start from `as_of`.
                 let as_of_frontier = self.as_of_frontier.clone();
                 let until = self.until.clone();
+                // A restored dataflow's arrangements already hold every update at or before its
+                // `as_of`, which restore sets to `F - 1`. Emitting those rows again would double
+                // them, and their minimum-time capability would precede the restored upper.
+                let restoring = crate::checkpoint::restoring();
                 // Advancing times to `as_of` can collapse distinct times onto one, so
                 // rows the planner left distinct can become duplicates. The
                 // `ConsolidatingColumnBuilder` folds those within the batch.
@@ -1335,7 +1342,9 @@ impl<'scope, T: RenderTimestamp + MaybeBucketByTime> Context<'scope, T> {
                     .into_iter()
                     .filter_map(move |(row, mut time, diff)| {
                         time.advance_by(as_of_frontier.borrow());
-                        if !until.less_equal(&time) {
+                        if restoring && !as_of_frontier.less_than(&time) {
+                            None
+                        } else if !until.less_equal(&time) {
                             Some((
                                 row.0,
                                 <T as Refines<mz_repr::Timestamp>>::to_inner(time),
@@ -1355,7 +1364,7 @@ impl<'scope, T: RenderTimestamp + MaybeBucketByTime> Context<'scope, T> {
                 // The as-of can be at or beyond the `until`, for example on restart of a REFRESH
                 // MV past its last refresh. The error must then be dropped like the rows above,
                 // because `apply_refresh` asserts that no update arrives after the last refresh.
-                let errs = if self.until.less_equal(&error_time) {
+                let errs = if restoring || self.until.less_equal(&error_time) {
                     Vec::new()
                 } else {
                     errs

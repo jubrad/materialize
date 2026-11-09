@@ -17,6 +17,7 @@ use columnation::Columnation;
 use differential_dataflow::Data;
 use differential_dataflow::difference::Abelian;
 use differential_dataflow::operators::arrange::{Arranged, TraceAgent};
+use differential_dataflow::operators::cursor::reduce::CursorTactic;
 use differential_dataflow::trace::cursor::{BatchCursor, BatchDiff, BatchVal, BatchValOwn};
 use differential_dataflow::trace::implementations::BatchContainer;
 use differential_dataflow::trace::{Builder, Cursor, Navigable, Trace, TraceReader};
@@ -125,10 +126,52 @@ where
                 }
             };
 
+        if let Some(site) = crate::checkpoint::next_site::<T2>() {
+            // `Arranged::reduce_abelian`'s adaptation of `logic`, applied here because the
+            // restorable operator takes a tactic.
+            let mut logic = logic;
+            let tactic = CursorTactic::<T1::Batch, T2::Batch, Bu, _, _>::new(
+                reduce_core_logic::<T1, T2, KC, _>(move |key, input, output, change| {
+                    if !input.is_empty() {
+                        logic(key, input, change);
+                    }
+                    change.extend(output.drain(..).map(|(x, mut d)| {
+                        d.negate();
+                        (x, d)
+                    }));
+                    differential_dataflow::consolidation::consolidate(change);
+                }),
+                push_closure,
+            );
+            return crate::extensions::restorable::reduce_restorable::<_, T2, _>(
+                self, name, tactic, site,
+            )
+            .log_arrangement_size();
+        }
+
         // Allow access to `reduce_abelian` since we're within Mz's wrapper and force arrangement
         // size logging.
         #[allow(clippy::disallowed_methods)]
         Arranged::<_>::reduce_abelian::<_, Bu, T2, KC, _>(self, name, logic, push_closure)
             .log_arrangement_size()
     }
+}
+
+/// Pins a closure to the higher-ranked signature `reduce_core` expects, which closure inference
+/// cannot derive from `CursorTactic::new` alone.
+fn reduce_core_logic<T1, T2, KC, F>(logic: F) -> F
+where
+    T1: TraceReader<Batch: Navigable>,
+    T2: TraceReader<Batch: Navigable>,
+    KC: BatchContainer,
+    BatchCursor<T1>: Cursor<KeyContainer = KC>,
+    for<'a> BatchCursor<T1>: Cursor<Key<'a> = KC::ReadItem<'a>>,
+    F: FnMut(
+            KC::ReadItem<'_>,
+            &[(BatchVal<'_, T1>, BatchDiff<T1>)],
+            &mut Vec<(BatchValOwn<T2>, BatchDiff<T2>)>,
+            &mut Vec<(BatchValOwn<T2>, BatchDiff<T2>)>,
+        ) + 'static,
+{
+    logic
 }

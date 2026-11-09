@@ -70,6 +70,42 @@ pub struct DataflowDescription<P, S: 'static = (), O = MapFilterProject> {
     pub debug_name: String,
     /// Description of how the dataflow's progress relates to wall-clock time. None for unknown.
     pub time_dependence: Option<TimeDependence>,
+    /// A replica-local arrangement checkpoint to restore from. Set only inside the replica, by
+    /// the worker that sequences commands, and never by the controller.
+    #[serde(default)]
+    pub checkpoint_restore: Option<CheckpointRestore>,
+}
+
+/// How a dataflow uses arrangement checkpoints, decided before the dataflow is broadcast.
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub struct CheckpointRestore {
+    /// The checkpoint key. Workers checkpoint only if the key they compute themselves is
+    /// identical.
+    pub key: String,
+    /// The checkpoint generation whose shards this incarnation reads and writes.
+    pub generation: u64,
+    /// The committed checkpoint frontier to restore at, if restoring. Restored state holds
+    /// exactly the updates at times before it.
+    pub frontier: Option<Timestamp>,
+    /// The checkpoint to restore from, when it was written by a replica with a different worker
+    /// count. `generation` is then a new generation, seeded with the restored contents.
+    #[serde(default)]
+    pub source: Option<CheckpointSource>,
+    /// Whether `generation` was started by another replica of the same size and may already have
+    /// checkpoint rounds.
+    #[serde(default)]
+    pub joined: bool,
+}
+
+/// A checkpoint generation written by a replica with `peers` workers.
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub struct CheckpointSource {
+    /// The checkpoint key on a replica with `peers` workers.
+    pub key: String,
+    /// The generation to restore from.
+    pub generation: u64,
+    /// The worker count of the replicas that write the generation.
+    pub peers: usize,
 }
 
 impl<P, S, O> DataflowDescription<P, S, O> {
@@ -278,6 +314,7 @@ impl<P, S, O> DataflowDescription<P, S, O> {
             refresh_schedule,
             debug_name,
             time_dependence,
+            checkpoint_restore,
         } = self;
         let source_imports = source_imports
             .into_iter()
@@ -321,6 +358,7 @@ impl<P, S, O> DataflowDescription<P, S, O> {
             refresh_schedule,
             debug_name,
             time_dependence,
+            checkpoint_restore,
         })
     }
 
@@ -338,6 +376,7 @@ impl<P, S, O> DataflowDescription<P, S, O> {
             refresh_schedule: None,
             debug_name: name,
             time_dependence: None,
+            checkpoint_restore: None,
         }
     }
 
@@ -665,6 +704,7 @@ where
             refresh_schedule: self.refresh_schedule.clone(),
             debug_name: self.debug_name.clone(),
             time_dependence: self.time_dependence.clone(),
+            checkpoint_restore: self.checkpoint_restore.clone(),
         }
     }
 }

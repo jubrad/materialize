@@ -1611,6 +1611,7 @@ impl Instance {
             refresh_schedule: dataflow.refresh_schedule,
             debug_name: dataflow.debug_name,
             time_dependence: dataflow.time_dependence,
+            checkpoint_restore: None,
         };
 
         if augmented_dataflow.is_transient() {

@@ -1207,6 +1207,20 @@ where
         as_of: Antichain<T>,
         should_fetch_part: impl for<'a> Fn(Option<&'a LazyPartStats>) -> bool,
     ) -> Result<Cursor<K, V, T, D>, Since<T>> {
+        let budget = COMPACTION_MEMORY_BOUND_BYTES.get(&self.cfg);
+        self.snapshot_cursor_with_budget(as_of, should_fetch_part, budget)
+            .await
+    }
+
+    /// [Self::snapshot_cursor], prefetching parts up to `prefetch_budget_bytes` instead of the
+    /// compaction memory bound. The budget is a soft limit: the cursor always holds the current
+    /// part of every run it merges.
+    pub async fn snapshot_cursor_with_budget(
+        &mut self,
+        as_of: Antichain<T>,
+        should_fetch_part: impl for<'a> Fn(Option<&'a LazyPartStats>) -> bool,
+        prefetch_budget_bytes: usize,
+    ) -> Result<Cursor<K, V, T, D>, Since<T>> {
         let (lease, batches) = self.snapshot_batches(as_of.clone()).await?;
 
         Self::read_batches_consolidated(
@@ -1221,7 +1235,7 @@ where
             &batches,
             lease,
             should_fetch_part,
-            COMPACTION_MEMORY_BOUND_BYTES.get(&self.cfg),
+            prefetch_budget_bytes,
         )
     }
 

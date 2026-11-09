@@ -876,6 +876,22 @@ impl<'a> ActiveComputeState<'a> {
                 .insert(id, Rc::clone(&suspension_token));
         }
 
+        let checkpoint = crate::checkpoint::RenderGuard::begin(
+            &dataflow,
+            self.timely_worker.index(),
+            self.timely_worker.peers(),
+            &self.compute_state.worker_config,
+            &self.compute_state.persist_clients,
+        );
+        let mut dataflow = dataflow;
+        if let Some(frontier) = checkpoint.restoring() {
+            // Render as if created at `F - 1`: restored state holds every update before `F`, and
+            // the inputs replay from there. The collection state above keeps the controller's
+            // `as_of`, so frontier reporting is unchanged.
+            let as_of = frontier.step_back().expect("restore frontier is positive");
+            dataflow.as_of = Some(Antichain::from_elem(as_of));
+        }
+        let name = dataflow.debug_name.clone();
         crate::render::build_compute_dataflow(
             self.timely_worker,
             self.compute_state,
@@ -884,6 +900,7 @@ impl<'a> ActiveComputeState<'a> {
             until,
             dataflow_expiration,
         );
+        checkpoint.finish(&name);
     }
 
     fn handle_schedule(&mut self, id: GlobalId) {

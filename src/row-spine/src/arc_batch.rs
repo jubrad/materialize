@@ -193,6 +193,18 @@ impl<B: Builder> Builder for ArcBuilder<B> {
     }
 }
 
+impl<B: crate::StreamSealer> crate::StreamSealer for ArcBuilder<B> {
+    type Stats = B::Stats;
+    fn observe(stats: &mut Self::Stats, chunk: &Self::Input) {
+        B::observe(stats, chunk)
+    }
+    fn with_stats(stats: Self::Stats) -> Self {
+        ArcBuilder {
+            builder: B::with_stats(stats),
+        }
+    }
+}
+
 impl<C, B: Sealer<C>> Sealer<C> for ArcBuilder<B> {
     type Output = ArcBatch<B::Output>;
     fn seal(chain: &mut Vec<C>) -> Option<Self::Output> {

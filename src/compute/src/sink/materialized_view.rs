@@ -250,6 +250,11 @@ pub(super) fn persist_sink<'s>(
 where
 {
     if mz_compute_types::dyncfgs::ENABLE_SYNC_MV_SINK.get(&compute_state.worker_config) {
+        // Checkpoint keys exclude dataflows with this sink.
+        assert!(
+            !crate::checkpoint::restoring(),
+            "the sync MV sink cannot restore from a checkpoint"
+        );
         return materialized_view_v2::persist_sink(
             sink_id,
             target,
@@ -263,7 +268,12 @@ where
     }
 
     let scope = ok_collection.scope();
-    let desired = OkErr::new(ok_collection.inner, err_collection.inner);
+    let mut desired = (ok_collection.inner, err_collection.inner);
+    let mut checkpoint_token = None;
+    if let Some(site) = crate::checkpoint::next_sink_site(sink_id) {
+        (desired, checkpoint_token) = crate::checkpoint::checkpoint_sink(desired, site);
+    }
+    let desired = OkErr::new(desired.0, desired.1);
 
     // Read back the persist shard.
     let (persist, persist_token) =
@@ -302,7 +312,13 @@ where
     let collection = compute_state.expect_collection_mut(sink_id);
     collection.sink_write_frontier = Some(sink_frontier);
 
-    Rc::new((persist_token, mint_token, write_token, append_token))
+    Rc::new((
+        persist_token,
+        mint_token,
+        write_token,
+        append_token,
+        checkpoint_token,
+    ))
 }
 
 /// Generic wrapper around ok/err pairs (e.g. streams, frontiers), to simplify code dealing with

@@ -620,6 +620,11 @@ impl LetFreePlan {
         self.root
     }
 
+    /// Iterate over the expressions of all nodes, in `LirId` order.
+    pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
+        self.nodes.values().map(|node| &node.expr)
+    }
+
     /// Destruct the plan and return its raw parts (the nodes, the root node, and the topological
     /// order).
     ///

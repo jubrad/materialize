@@ -17,6 +17,7 @@ pub use self::arc_batch::{ArcBatch, ArcBuilder};
 pub use self::dictionary::DatumContainer;
 pub use self::dictionary::DatumSeq;
 pub use self::dictionary::builders::RowRowColPagedState;
+pub use self::dictionary::builders::RowStats;
 pub use self::offset_opt::OffsetOptimized;
 pub use self::spines::{
     ArcOrdKeyBatcher, ArcOrdKeyBuilder, ArcOrdKeySpine, ArcOrdValBatcher, ArcOrdValBuilder,
@@ -32,6 +33,49 @@ use differential_dataflow::trace::implementations::OffsetList;
 /// Enable per-column dictionary compression in row containers.
 pub static DICTIONARY_COMPRESSION: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Builds a batch from sorted, consolidated chunks that the caller supplies twice.
+///
+/// The first pass feeds every chunk to [`StreamSealer::observe`], which gathers what `seal` reads
+/// from a whole chain: the update counts it sizes containers with, and the statistics its
+/// dictionary codecs come from. The second pass pushes the same updates, in the same order, into
+/// the builder from [`StreamSealer::with_stats`]. The batch then matches what `seal` builds,
+/// while the caller holds one chunk beside it rather than the whole chain.
+pub trait StreamSealer: differential_dataflow::trace::Builder {
+    /// What the first pass gathers.
+    type Stats: Default;
+    /// Gathers statistics from one chunk of the first pass.
+    fn observe(stats: &mut Self::Stats, chunk: &Self::Input);
+    /// A builder for the second pass.
+    fn with_stats(stats: Self::Stats) -> Self;
+}
+
+/// Update counts summed over chunks. A key or value that spans a chunk boundary is counted once
+/// per chunk, which only over-sizes the containers slightly.
+fn add_counts(total: &mut (usize, usize, usize), (keys, vals, upds): (usize, usize, usize)) {
+    total.0 += keys;
+    total.1 += vals;
+    total.2 += upds;
+}
+
+impl<L, CI> StreamSealer
+    for differential_dataflow::trace::implementations::ord_neu::OrdKeyBuilder<L, CI>
+where
+    Self: differential_dataflow::trace::Builder<Input = CI>,
+    L: differential_dataflow::trace::implementations::Layout,
+    CI: differential_dataflow::trace::implementations::ord_neu::BuilderInput<
+            L::KeyContainer,
+            L::ValContainer,
+        >,
+{
+    type Stats = (usize, usize, usize);
+    fn observe(stats: &mut Self::Stats, chunk: &CI) {
+        add_counts(stats, CI::key_val_upd_counts(std::slice::from_ref(chunk)));
+    }
+    fn with_stats((keys, vals, upds): Self::Stats) -> Self {
+        Self::with_capacity(keys, vals, upds)
+    }
+}
 
 /// Spines specialized to contain `Row` types in keys and values.
 mod spines {
@@ -636,6 +680,98 @@ mod tests {
             heap(&poisoned),
         );
     }
+
+    #[mz_ore::test]
+    #[cfg_attr(miri, ignore)] // integer-to-pointer casts in row decoding are unsupported under miri
+    fn stream_sealer_matches_seal() {
+        use std::sync::atomic::Ordering;
+
+        use differential_dataflow::trace::Builder;
+        use differential_dataflow::trace::implementations::merge_batcher::Sealer;
+        use mz_timely_util::columnation::ColumnationStack;
+
+        use crate::StreamSealer;
+        use crate::dictionary::builders::RowRowBuilder;
+
+        crate::DICTIONARY_COMPRESSION.store(true, Ordering::Relaxed);
+
+        let mut updates: Vec<((Row, Row), Timestamp, Diff)> = (0..100_000i64)
+            .map(|i| {
+                let key = Row::pack_slice(&[Datum::Int64(i / 3), Datum::String("repeated key")]);
+                let val = Row::pack_slice(&[Datum::Int64(i % 3), Datum::String("repeated val")]);
+                ((key, val), Timestamp::from(7u64), Diff::ONE)
+            })
+            .collect();
+        updates.sort();
+        let chain = || {
+            updates
+                .chunks(1000)
+                .map(|chunk| {
+                    let mut stack = ColumnationStack::default();
+                    for update in chunk {
+                        stack.copy(update);
+                    }
+                    stack
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let sealed =
+            <RowRowBuilder<Timestamp, Diff> as Sealer<_>>::seal(&mut chain()).expect("non-empty");
+
+        let mut stats = Default::default();
+        for chunk in &chain() {
+            RowRowBuilder::<Timestamp, Diff>::observe(&mut stats, chunk);
+        }
+        let mut builder = RowRowBuilder::<Timestamp, Diff>::with_stats(stats);
+        for mut chunk in chain() {
+            builder.push(&mut chunk);
+        }
+        let streamed = builder.done().expect("non-empty");
+
+        assert!(
+            streamed.storage.keys.has_codec(),
+            "streamed keys carry a codec"
+        );
+        assert!(
+            streamed.storage.vals.vals.has_codec(),
+            "streamed vals carry a codec"
+        );
+        let heap = |c: &DatumContainer| {
+            let mut size = 0;
+            c.heap_size(|len, _| size += len);
+            size
+        };
+        assert_eq!(
+            heap(&streamed.storage.keys),
+            heap(&sealed.storage.keys),
+            "keys compress as in seal"
+        );
+        assert_eq!(
+            heap(&streamed.storage.vals.vals),
+            heap(&sealed.storage.vals.vals),
+            "vals compress as in seal"
+        );
+        assert_eq!(streamed.storage.keys.len(), sealed.storage.keys.len());
+        for i in 0..sealed.storage.keys.len() {
+            assert_eq!(
+                streamed.storage.keys.index(i).collect::<Vec<_>>(),
+                sealed.storage.keys.index(i).collect::<Vec<_>>(),
+                "key {i}"
+            );
+        }
+        assert_eq!(
+            streamed.storage.vals.vals.len(),
+            sealed.storage.vals.vals.len()
+        );
+        for i in 0..sealed.storage.vals.vals.len() {
+            assert_eq!(
+                streamed.storage.vals.vals.index(i).collect::<Vec<_>>(),
+                sealed.storage.vals.vals.index(i).collect::<Vec<_>>(),
+                "val {i}"
+            );
+        }
+    }
 }
 
 /// A `[u8]`-specialized container.
@@ -1174,6 +1310,57 @@ mod dictionary {
             }
         }
 
+        /// What [`crate::StreamSealer`]'s first pass gathers for the `Row` builders.
+        #[derive(Default)]
+        pub struct RowStats {
+            counts: (usize, usize, usize),
+            keys: ColumnsCodec,
+            vals: ColumnsCodec,
+        }
+
+        impl RowStats {
+            /// The codec `build_codec` would produce from the same rows.
+            fn codec(stats: &ColumnsCodec) -> Option<ColumnsCodec> {
+                DICTIONARY_COMPRESSION
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .then(|| ColumnsCodec::new_from([stats]))
+            }
+        }
+
+        impl<T, R> crate::StreamSealer for RowRowBuilder<T, R>
+        where
+            T: Lattice + Timestamp + Columnation,
+            R: Ord + Semigroup + Columnation + 'static,
+        {
+            type Stats = RowStats;
+
+            fn observe(stats: &mut RowStats, chunk: &Self::Input) {
+                crate::add_counts(
+                    &mut stats.counts,
+                    <_ as BuilderInput<DatumContainer, DatumContainer>>::key_val_upd_counts(
+                        std::slice::from_ref(chunk),
+                    ),
+                );
+                if DICTIONARY_COMPRESSION.load(std::sync::atomic::Ordering::Relaxed) {
+                    observe_rows(&mut stats.keys, chunk.iter().map(|((k, _), _, _)| k));
+                    observe_rows(&mut stats.vals, chunk.iter().map(|((_, v), _, _)| v));
+                }
+            }
+
+            fn with_stats(stats: RowStats) -> Self {
+                let (keys, vals, upds) = stats.counts;
+                let mut builder = Self {
+                    inner: OrdValBuilder::with_capacity(keys, vals, upds),
+                };
+                // As in `seal`, the installed codec replaces the stats gatherer.
+                builder.inner.result.keys.codec = RowStats::codec(&stats.keys);
+                builder.inner.result.keys.stats = None;
+                builder.inner.result.vals.vals.codec = RowStats::codec(&stats.vals);
+                builder.inner.result.vals.vals.stats = None;
+                builder
+            }
+        }
+
         pub struct RowValBuilder<V, T, R>
         where
             V: Ord + Clone + Columnation + 'static,
@@ -1249,6 +1436,38 @@ mod dictionary {
                 }
 
                 builder.done()
+            }
+        }
+
+        impl<V, T, R> crate::StreamSealer for RowValBuilder<V, T, R>
+        where
+            V: Ord + Clone + Columnation,
+            T: Lattice + Timestamp + Columnation,
+            R: Ord + Semigroup + Columnation + 'static,
+        {
+            type Stats = RowStats;
+
+            fn observe(stats: &mut RowStats, chunk: &Self::Input) {
+                crate::add_counts(
+                    &mut stats.counts,
+                    <_ as BuilderInput<DatumContainer, TimelyStack<V>>>::key_val_upd_counts(
+                        std::slice::from_ref(chunk),
+                    ),
+                );
+                if DICTIONARY_COMPRESSION.load(std::sync::atomic::Ordering::Relaxed) {
+                    observe_rows(&mut stats.keys, chunk.iter().map(|((k, _), _, _)| k));
+                }
+            }
+
+            fn with_stats(stats: RowStats) -> Self {
+                let (keys, vals, upds) = stats.counts;
+                let mut builder = Self {
+                    inner: OrdValBuilder::with_capacity(keys, vals, upds),
+                };
+                // As in `seal`, the installed codec replaces the stats gatherer.
+                builder.inner.result.keys.codec = RowStats::codec(&stats.keys);
+                builder.inner.result.keys.stats = None;
+                builder
             }
         }
 

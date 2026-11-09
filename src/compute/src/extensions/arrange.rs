@@ -126,6 +126,16 @@ where
         Tr: Trace<Time = T> + 'static,
         Arranged<'scope, TraceAgent<Tr>>: ArrangementSize,
     {
+        if let Some(site) = crate::checkpoint::next_site::<Tr>() {
+            return crate::extensions::restorable::arrange_restorable::<_, _, Ba, Tr>(
+                self,
+                pact,
+                name,
+                Ba::new_batcher,
+                site,
+            )
+            .log_arrangement_size();
+        }
         // Allow access to `arrange_named` because we're within Mz's wrapper.
         #[allow(clippy::disallowed_methods)]
         arrange_core::<_, _, Ba, _>(self, pact, name, Ba::new_batcher).log_arrangement_size()

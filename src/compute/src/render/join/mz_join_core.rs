@@ -151,6 +151,11 @@ where
             // `RefCell` lock on both traces at the same time, as they could be the same trace and
             // this would panic.
             let mut batch2_updates = Vec::new();
+            // CHECKPOINT: in a restored dataflow both traces start with their restored spans,
+            // whose join is already in every restored arrangement downstream. Joining them again
+            // would double it. The acknowledged frontiers still start at the restored upper, so
+            // every later batch joins against the restored state.
+            let restored = crate::checkpoint::restoring();
             trace2.map_spans(|batch2| {
                 trace!(
                     operator_id,
@@ -163,7 +168,7 @@ where
 
                 acknowledged2.clone_from(batch2.upper());
                 // Empty batches carry no updates, and have nothing to join.
-                if let Some(updates2) = &batch2.inner {
+                if let (Some(updates2), false) = (&batch2.inner, restored) {
                     batch2_updates.push(updates2.clone());
                 }
             });

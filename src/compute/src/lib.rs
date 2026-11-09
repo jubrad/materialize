@@ -15,6 +15,7 @@ pub mod memory_limiter;
 pub mod server;
 
 mod arrangement;
+mod checkpoint;
 mod command_channel;
 mod compute_state;
 mod extensions;

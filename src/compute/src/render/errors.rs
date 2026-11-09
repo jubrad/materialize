@@ -55,6 +55,16 @@ use std::fmt;
 pub struct DataflowErrorSer(Vec<u8>);
 
 impl DataflowErrorSer {
+    /// The serialized error bytes.
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Wraps bytes previously returned by [`Self::as_bytes`].
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
     /// Decode the serialized bytes back into a [`DataflowError`].
     ///
     /// # Panics

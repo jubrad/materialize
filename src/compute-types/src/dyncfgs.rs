@@ -263,6 +263,37 @@ pub const COLUMN_PAGED_BATCHER_POOL_RSS_TARGET_FRACTION: Config<f64> = Config::n
     ParameterScope::Replica,
 );
 
+/// Whether replicas checkpoint the arrangements of supported dataflows to persist, and restore
+/// from a matching checkpoint on restart. Spike only.
+pub const ENABLE_ARRANGEMENT_CHECKPOINTS: Config<bool> = Config::new(
+    "enable_arrangement_checkpoints",
+    false,
+    "Checkpoint the arrangements of supported dataflows to persist, and restore from an exactly \
+     matching checkpoint when the dataflow is re-created.",
+    ParameterScope::Replica,
+);
+
+/// The interval between arrangement checkpoints, in timestamp space. Checkpoint frontiers are
+/// multiples of this interval, so all writers of a dataflow pick the same frontiers.
+pub const ARRANGEMENT_CHECKPOINT_INTERVAL: Config<Duration> = Config::new(
+    "arrangement_checkpoint_interval",
+    Duration::from_secs(10),
+    "The interval between arrangement checkpoints.",
+    ParameterScope::Replica,
+);
+
+/// How long, in wall-clock time, one checkpoint round may take, and how long a dataflow's
+/// committed checkpoint may stall, before checkpointing stops and the input holds are released.
+/// Restore then starts from scratch. During a round, arrangements leave the batches since the
+/// last checkpoint unmerged, so this also bounds that memory.
+pub const ARRANGEMENT_CHECKPOINT_MAX_LAG: Config<Duration> = Config::new(
+    "arrangement_checkpoint_max_lag",
+    Duration::from_secs(60),
+    "How long an arrangement checkpoint round may take, or the committed checkpoint may stall, \
+     before checkpointing stops and input history is released.",
+    ParameterScope::Replica,
+);
+
 /// Whether rendering should use `mz_join_core` rather than DD's `JoinCore::join_core`.
 pub const ENABLE_MZ_JOIN_CORE: Config<bool> = Config::new(
     "enable_mz_join_core",
@@ -822,6 +853,9 @@ pub const MV_SINK_ADVANCE_PERSIST_FRONTIERS: Config<bool> = Config::new(
 /// Adds the full set of all compute `Config`s.
 pub fn all_dyncfgs(configs: ConfigSet) -> ConfigSet {
     configs
+        .add(&ENABLE_ARRANGEMENT_CHECKPOINTS)
+        .add(&ARRANGEMENT_CHECKPOINT_INTERVAL)
+        .add(&ARRANGEMENT_CHECKPOINT_MAX_LAG)
         .add(&ENABLE_ERROR_DISTINCT)
         .add(&ENABLE_MZ_JOIN_CORE)
         .add(&ENABLE_SYNC_MV_SINK)

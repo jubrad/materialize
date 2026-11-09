@@ -570,7 +570,11 @@ impl ClusterSpec for Config {
         let (cmd_tx, cmd_rx) = command_channel::render(timely_worker, storage_lane_input);
         let (resp_tx, resp_rx) = mpsc::unbounded_channel();
 
-        spawn_channel_adapter(client_rx, cmd_tx, resp_rx, worker_id);
+        let planner = crate::checkpoint::CommandPlanner::new(
+            Arc::clone(&self.persist_clients),
+            timely_worker.peers(),
+        );
+        spawn_channel_adapter(client_rx, cmd_tx, resp_rx, worker_id, planner);
 
         // Create the storage guest state.
         let storage = guest_setup.map(|(cfg, storage_client_rx, internal_cmd_tx)| {
@@ -1318,6 +1322,7 @@ fn spawn_channel_adapter(
     command_tx: command_channel::Sender,
     mut response_rx: mpsc::UnboundedReceiver<(ComputeResponse, Uuid)>,
     worker_id: usize,
+    planner: crate::checkpoint::CommandPlanner,
 ) {
     mz_ore::task::spawn(
         || format!("compute-channel-adapter-{worker_id}"),
@@ -1352,7 +1357,12 @@ fn spawn_channel_adapter(
                 let mut serve_rx_channels = async || loop {
                     tokio::select! {
                         msg = command_rx.recv() => match msg {
-                            Some(cmd) => command_tx.send((cmd, nonce)),
+                            Some(cmd) => {
+                                // Commands are planned in order, before the broadcast, so every
+                                // worker sees the same checkpoint decision.
+                                let cmd = planner.plan(cmd).await;
+                                command_tx.send((cmd, nonce))
+                            }
                             None => return Err(()),
                         },
                         msg = response_rx.recv() => {
