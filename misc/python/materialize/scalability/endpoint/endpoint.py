@@ -22,6 +22,8 @@ class ConnectionKind(Enum):
 class Endpoint:
 
     _version: str | None = None
+    # Options for creating the benchmark cluster on this endpoint, if the benchmark creates it.
+    cluster_options: str | None = None
 
     def __init__(self, specified_target: str):
         self._specified_target = specified_target

@@ -290,6 +290,49 @@ class BenchmarkExecutor:
         self._record_results(result)
         return result
 
+    def _ensure_cluster(self, endpoint: Endpoint) -> None:
+        """Creates the benchmark cluster if the endpoint has cluster options and the cluster does
+        not exist yet, then waits until all its replicas are online."""
+        cluster_name = self.schema.cluster_name
+        if endpoint.cluster_options is None or cluster_name is None:
+            return
+
+        conn = endpoint.sql_connection()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT count(*) FROM mz_clusters WHERE name = %s", (cluster_name,)
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        if row[0] == 0:
+            create = f"CREATE CLUSTER {cluster_name} ({endpoint.cluster_options})"
+            print(create)
+            cursor.execute(create.encode("utf8"))
+
+        deadline = time.time() + 300
+        while True:
+            cursor.execute(
+                """SELECT count(*) FILTER (WHERE s.status <> 'online'), count(*)
+                FROM mz_cluster_replicas r
+                JOIN mz_clusters c ON r.cluster_id = c.id
+                LEFT JOIN mz_internal.mz_cluster_replica_statuses s ON s.replica_id = r.id
+                WHERE c.name = %s""",
+                (cluster_name,),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            not_online, total = row
+            if total > 0 and not_online == 0:
+                break
+            if time.time() > deadline:
+                raise RuntimeError(f"replicas of {cluster_name} did not come online")
+            time.sleep(1)
+
+        cursor.execute(f"SHOW CREATE CLUSTER {cluster_name}".encode())
+        print(cursor.fetchall())
+        conn.close()
+
     def run_workload_for_endpoint_with_concurrency(
         self,
         endpoint: Endpoint,
@@ -301,6 +344,7 @@ class BenchmarkExecutor:
             f"Preparing benchmark for workload '{workload.name()}' at concurrency {concurrency} ..."
         )
         endpoint.up()
+        self._ensure_cluster(endpoint)
 
         init_sqls = self.schema.init_sqls()
 

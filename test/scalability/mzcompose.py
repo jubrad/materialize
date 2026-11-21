@@ -201,6 +201,15 @@ def workflow_default(c: Composition, parser: WorkflowArgumentParser) -> None:
 
     parser.add_argument("--cluster-name", type=str, help="Cluster to SET CLUSTER to")
 
+    parser.add_argument(
+        "--cluster-options",
+        type=str,
+        action="append",
+        help="Create the --cluster-name cluster with these options, for example "
+        "\"SIZE = 'scale=1,workers=1', REPLICATION FACTOR = 3\". Give it once for all "
+        "targets, or once per --target in the same order.",
+    )
+
     args = parser.parse_args()
     regression_against_target = args.regression_against
 
@@ -294,6 +303,14 @@ def validate_and_adjust_targets(
     if len(args.target) == 0:
         args.target = ["HEAD"]
 
+    if args.cluster_options is not None:
+        if args.cluster_name is None:
+            raise RuntimeError("--cluster-options requires --cluster-name")
+        if len(args.cluster_options) not in (1, len(args.target)):
+            raise RuntimeError(
+                "--cluster-options must be given once, or once per --target"
+            )
+
     if (
         regression_against_target is not None
         and regression_against_target not in args.target
@@ -312,7 +329,7 @@ def get_baseline_and_other_endpoints(
     # number of remote targets seen so far rather than the overall target
     # position (which is wrong as soon as targets are mixed, e.g. HEAD + remote).
     remote_target_index = 0
-    for specified_target in args.target:
+    for target_index, specified_target in enumerate(args.target):
         endpoint: Endpoint | None = None
 
         if specified_target == TARGET_MATERIALIZE_LOCAL:
@@ -360,6 +377,11 @@ def get_baseline_and_other_endpoints(
                 image=f"{image_registry()}/materialized:{resolved_target}",
             )
         assert endpoint is not None
+
+        if args.cluster_options is not None:
+            endpoint.cluster_options = args.cluster_options[
+                target_index if len(args.cluster_options) > 1 else 0
+            ]
 
         if specified_target == regression_against_target:
             baseline_endpoint = endpoint
