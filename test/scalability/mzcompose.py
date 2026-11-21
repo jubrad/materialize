@@ -195,7 +195,6 @@ def workflow_default(c: Composition, parser: WorkflowArgumentParser) -> None:
     parser.add_argument(
         "--verbose",
         default=False,
-        type=bool,
         action=argparse.BooleanOptionalAction,
     )
 
